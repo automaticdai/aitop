@@ -30,9 +30,9 @@ class DeepSeekProvider:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+            return UsageSnapshot(self.name, ok=True, balance=self._parse_balance(data), raw=data)
         except Exception as exc:  # noqa: BLE001
             return UsageSnapshot(self.name, ok=False, error=str(exc))
-        return UsageSnapshot(self.name, ok=True, balance=self._parse_balance(data), raw=data)
 
     @staticmethod
     def _parse_balance(data: dict) -> Balance | None:
