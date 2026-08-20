@@ -1,7 +1,7 @@
 import os
 import time
 
-from ai_pal.providers.pty_driver import drive_screen
+from aitop.providers.pty_driver import drive_screen
 
 
 def test_exec_failure_terminates_child_immediately_not_via_timeout():

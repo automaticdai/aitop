@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ai_pal.config import Config, load_config
+from aitop.config import Config, load_config
 
 
 def test_defaults():

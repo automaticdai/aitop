@@ -1,6 +1,6 @@
-from ai_pal.config import Config
-from ai_pal.providers import build_providers
-from ai_pal.providers.mock import MockProvider
+from aitop.config import Config
+from aitop.providers import build_providers
+from aitop.providers.mock import MockProvider
 
 
 def test_build_mock_providers():

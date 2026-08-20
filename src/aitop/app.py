@@ -48,8 +48,8 @@ class SnapshotRow(Static):
             self.update(render_snapshot(snap))
 
 
-class AIPalApp(App):
-    TITLE = "ai-pal"
+class AitopApp(App):
+    TITLE = "aitop"
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh now"),

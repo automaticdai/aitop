@@ -1,5 +1,5 @@
-from ai_pal.models import Balance, Quota, QuotaGroup, UsageSnapshot
-from ai_pal.render import (
+from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
+from aitop.render import (
     DISPLAY_NAME,
     bar_color,
     fmt_pct,
@@ -112,6 +112,23 @@ def test_render_snapshot_quota_line_omits_reset_line_when_absent():
     assert "resets" not in out
 
 
+def test_render_snapshot_percent_quota_shows_bare_percentage():
+    # "x/100 (x%)" is a redundant restatement for percent-based quotas
+    # (Codex/Antigravity/Claude Code) -- just show the percentage.
+    snap = UsageSnapshot("codex", weekly=Quota(6, 100, "%"))
+    out = render_snapshot(snap)
+    assert "6.0%" in out
+    assert "/100" not in out
+
+
+def test_render_snapshot_non_percent_quota_still_shows_the_fraction():
+    # Non-percent units (messages, hours) don't have this redundancy --
+    # used/limit is genuinely informative there.
+    snap = UsageSnapshot("codex", weekly=Quota(30, 200, "messages"))
+    out = render_snapshot(snap)
+    assert "30/200 messages" in out
+
+
 def test_render_snapshot_groups():
     snap = UsageSnapshot(
         "gemini",
@@ -123,9 +140,24 @@ def test_render_snapshot_groups():
     out = render_snapshot(snap)
     assert "Gemini" in out
     assert "Claude & GPT-OSS" in out
-    assert "6/100" in out
-    assert "35/100" in out
+    assert "6.0%" in out
+    assert "35.0%" in out
     assert "Refreshes in 97h 25m" in out
+
+
+def test_render_snapshot_groups_have_a_blank_line_between_them():
+    snap = UsageSnapshot(
+        "gemini",
+        groups=[
+            QuotaGroup(label="Gemini", weekly=Quota(6, 100, "%")),
+            QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%")),
+        ],
+    )
+    lines = render_snapshot(snap).splitlines()
+    assert "" in lines
+    blank_idx = lines.index("")
+    assert lines[blank_idx - 1].startswith("weekly")
+    assert lines[blank_idx + 1] == "Claude & GPT-OSS"
 
 
 def test_render_stale_keeps_last_good_values():
@@ -137,8 +169,8 @@ def test_render_stale_keeps_last_good_values():
     out = render_stale(last_good, "pty timed out")
     assert "stale" in out
     assert "pty timed out" in out
-    assert "25/100" in out
-    assert "20/100" in out
+    assert "25.0%" in out
+    assert "20.0%" in out
 
 
 def test_render_stale_keeps_last_good_groups():
@@ -148,7 +180,7 @@ def test_render_stale_keeps_last_good_groups():
     )
     out = render_stale(last_good, "pty timed out")
     assert "Gemini" in out
-    assert "6/100" in out
+    assert "6.0%" in out
 
 
 def test_has_data():

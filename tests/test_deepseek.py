@@ -3,8 +3,8 @@ from pathlib import Path
 
 import httpx
 
-from ai_pal.models import Balance
-from ai_pal.providers.deepseek import DeepSeekProvider
+from aitop.models import Balance
+from aitop.providers.deepseek import DeepSeekProvider
 
 FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures" / "deepseek_balance.json").read_text()

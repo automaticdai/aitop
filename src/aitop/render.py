@@ -63,10 +63,12 @@ def _dot(color: str) -> str:
 def _quota_line(label: str, q: Quota) -> list[str]:
     color = bar_color(q.pct)
     bar = render_bar(q.pct)
-    lines = [
-        f"{label:<8}[{color}]{bar}[/{color}] "
-        f"{q.used:.0f}/{q.limit:.0f} {escape(q.unit)} ({fmt_pct(q.pct)})"
-    ]
+    # "x/100 (x%)" is a redundant restatement for percent-based quotas
+    # (Codex/Antigravity/Claude Code all report "%") -- just show the
+    # percentage. Non-percent units (messages, hours) keep the fraction,
+    # since used/limit is genuinely informative there.
+    value = fmt_pct(q.pct) if q.unit == "%" else f"{q.used:.0f}/{q.limit:.0f} {escape(q.unit)} ({fmt_pct(q.pct)})"
+    lines = [f"{label:<8}[{color}]{bar}[/{color}] {value}"]
     if q.reset_note:
         lines.append(f"        {escape(q.reset_note)}")
     return lines
@@ -91,7 +93,9 @@ def _value_lines(snap: UsageSnapshot) -> list[str]:
         lines.append(
             f"balance  {snap.balance.amount:.2f} {escape(snap.balance.currency)}"
         )
-    for group in snap.groups or []:
+    for i, group in enumerate(snap.groups or []):
+        if i > 0:
+            lines.append("")
         lines.extend(_group_lines(group))
     return lines
 

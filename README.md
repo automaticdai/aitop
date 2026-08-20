@@ -1,6 +1,6 @@
-# ai-pal
+# aitop
 
-`ai-pal` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude Code, Codex, Antigravity (agy), and DeepSeek — and renders each one as its own bordered block with a daily/weekly usage bar (or an account balance, for DeepSeek), so you can tell at a glance which assistant you're about to rate-limit yourself out of.
+`aitop` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude Code, Codex, Antigravity (agy), and DeepSeek — and renders each one as its own bordered block with a daily/weekly usage bar (or an account balance, for DeepSeek), so you can tell at a glance which assistant you're about to rate-limit yourself out of.
 
 ## Install
 
@@ -12,14 +12,14 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs `ai-pal` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `ai-pal` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `ai-pal` instead of `python -m ai_pal.cli`.
+This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `aitop` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `aitop` instead of `python -m aitop.cli`.
 
 ## Running it
 
 ```bash
-ai-pal              # live mode: polls real accounts/CLIs
-ai-pal --mock       # mock mode: synthetic data, no credentials or CLIs needed
-ai-pal --config path/to/config.toml   # use a config file at a custom path
+aitop              # live mode: polls real accounts/CLIs
+aitop --mock       # mock mode: synthetic data, no credentials or CLIs needed
+aitop --config path/to/config.toml   # use a config file at a custom path
 ```
 
 `--mock` is the easiest way to try the tool or develop against it: it swaps in a `MockProvider` for every enabled provider, which returns fixed, made-up quota/balance numbers immediately, with no network calls, no API keys, and none of the vendor CLIs installed.
@@ -32,7 +32,7 @@ Each provider gets its own bordered block, titled with its display name (Claude 
 
 When a CLI's screen shows a reset time for a quota window, that's captured verbatim (no timezone conversion or normalization — each vendor's own wording, as-is) and shown on a line under that bar.
 
-Antigravity's block shows two named groups rather than one bar, because the `agy` CLI reports two separate quota pools sharing the same account: "Gemini" (Gemini Flash/Pro) and "Claude & GPT-OSS" (a combined pool for Claude Opus/Sonnet and GPT-OSS models). Both are read from the same screen and rendered under their own labels.
+Antigravity's block shows two named groups rather than one bar, separated by a blank line, because the `agy` CLI reports two separate quota pools sharing the same account: "Gemini" (Gemini Flash/Pro) and "Claude & GPT-OSS" (a combined pool for Claude Opus/Sonnet and GPT-OSS models). Both are read from the same screen and rendered under their own labels.
 
 ### Key bindings
 
@@ -43,7 +43,7 @@ Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not
 
 ## What each provider needs
 
-`ai-pal` gets Claude Code, Codex, and Antigravity usage a different way than DeepSeek's balance: DeepSeek has a normal HTTP usage API, but Codex and Antigravity do not expose one that a personal/consumer account can call directly (Codex's usage endpoint is blocked by Cloudflare for consumer accounts; the old per-individual Gemini OAuth tier was deprecated by Google in favor of the Antigravity CLI). Claude Code's own CLI happens to be the most reliable way to read *its* own account's usage too, so all three are handled the same way for consistency. See "The PTY-scrape caveat" below.
+`aitop` gets Claude Code, Codex, and Antigravity usage a different way than DeepSeek's balance: DeepSeek has a normal HTTP usage API, but Codex and Antigravity do not expose one that a personal/consumer account can call directly (Codex's usage endpoint is blocked by Cloudflare for consumer accounts; the old per-individual Gemini OAuth tier was deprecated by Google in favor of the Antigravity CLI). Claude Code's own CLI happens to be the most reliable way to read *its* own account's usage too, so all three are handled the same way for consistency. See "The PTY-scrape caveat" below.
 
 | Provider | How it's fetched | What you need |
 |---|---|---|
@@ -56,18 +56,18 @@ For DeepSeek, set the key before launching:
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
-ai-pal
+aitop
 ```
 
-For Codex/Antigravity/Claude Code, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `ai-pal` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, its usage screen never renders (the CLI shows a login prompt instead) and the adapter's regexes simply find nothing to match. There's no explicit expired-session detection, so this isn't reported as a specific error — the row shows an amber dot and `no data (check the CLI's login state)`, which is your cue to go re-run that CLI by hand and check its login state yourself. See "The PTY-scrape caveat" below for why this failure mode can't be distinguished from other parse failures.
+For Codex/Antigravity/Claude Code, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `aitop` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, its usage screen never renders (the CLI shows a login prompt instead) and the adapter's regexes simply find nothing to match. There's no explicit expired-session detection, so this isn't reported as a specific error — the row shows an amber dot and `no data (check the CLI's login state)`, which is your cue to go re-run that CLI by hand and check its login state yourself. See "The PTY-scrape caveat" below for why this failure mode can't be distinguished from other parse failures.
 
 ### The PTY-scrape caveat
 
-For Codex, Antigravity, and Claude Code, `ai-pal` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), drives it with a scripted sequence of keystrokes (dismiss any first-run dialog, run the CLI's own usage/status slash command, wait for it to render), and then parses the resulting on-screen text with regular expressions to pull out percentages.
+For Codex, Antigravity, and Claude Code, `aitop` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), drives it with a scripted sequence of keystrokes (dismiss any first-run dialog, run the CLI's own usage/status slash command, wait for it to render), and then parses the resulting on-screen text with regular expressions to pull out percentages.
 
 This is a deliberate v1 tradeoff, not an accident or a bug:
 
-- It requires each vendor's CLI to be **installed and already authenticated** on the same machine `ai-pal` runs on — `ai-pal` piggybacks on that CLI's session rather than doing its own OAuth.
+- It requires each vendor's CLI to be **installed and already authenticated** on the same machine `aitop` runs on — `aitop` piggybacks on that CLI's session rather than doing its own OAuth.
 - It is inherently fragile to each CLI changing its own UI: if a future version of `codex`, `agy`, or `claude` renames its usage command, restyles its output, or adds/removes a dialog, the corresponding adapter's screen-scrape can silently stop matching and start reporting "no data" for that window (each adapter is written to fail closed — returning `None` for a quota it can't confidently parse — rather than fabricate a number).
 - Each fetch briefly spawns and kills a real CLI subprocess on every poll. The capture ends as soon as the numbers the adapter needs are on screen, and is hard-bounded by an internal timeout (~11s), so a slow-starting CLI can occasionally show up as a timeout on a given cycle even when everything is configured correctly. The three CLIs are staggered rather than all launched at the same instant, and a manual `r` refresh is ignored while a fetch round is already running.
 
@@ -75,10 +75,10 @@ If a vendor ever ships a real, individually-authenticatable HTTP usage API, that
 
 ## Configuration
 
-On startup, `ai-pal` looks for a TOML config file at:
+On startup, `aitop` looks for a TOML config file at:
 
 ```
-~/.config/ai-pal/config.toml
+~/.config/aitop/config.toml
 ```
 
 (or at the path given via `--config`). If the file doesn't exist, built-in defaults are used — you don't need to create one to run the app.

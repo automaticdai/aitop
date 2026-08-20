@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from ai_pal.models import Quota
-from ai_pal.providers import gemini as gemini_module
-from ai_pal.providers.gemini import _SEQ, _TOTAL_TIMEOUT, GeminiProvider
+from aitop.models import Quota
+from aitop.providers import gemini as gemini_module
+from aitop.providers.gemini import _SEQ, _TOTAL_TIMEOUT, GeminiProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "gemini_usage.txt").read_text()
 
@@ -203,7 +203,7 @@ def test_seq_does_not_send_bare_escape():
 
 
 def test_total_timeout_leaves_margin_under_scheduler_default():
-    # src/ai_pal/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
+    # src/aitop/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
     # by default. drive_screen's own SIGKILL cleanup must fire comfortably
     # before that, since asyncio.to_thread cannot interrupt an
     # already-running thread on cancellation -- an orphaned PTY child would

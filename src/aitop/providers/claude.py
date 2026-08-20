@@ -10,9 +10,9 @@ from .pty_driver import drive_screen
 # user's) may have ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL set
 # to redirect `claude` at a non-Anthropic backend (this project's own design
 # doc records DeepSeek having been used as a stand-in backend in some
-# sessions). ai-pal's whole point is to report the *real* Claude subscription
+# sessions). aitop's whole point is to report the *real* Claude subscription
 # limits, so the child is spawned through `env -u ...` to strip those three
-# vars unconditionally before exec, regardless of what's in ai-pal's own
+# vars unconditionally before exec, regardless of what's in aitop's own
 # ambient environment -- confirmed via `env -u ANTHROPIC_BASE_URL -u
 # ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_MODEL claude` that this lands on the real,
 # already-authenticated Anthropic account (org line on the welcome screen:
@@ -56,7 +56,7 @@ _CMD = [
 _SEQ = [(2.0, "\r"), (4.5, "/usage\r")]
 
 # Kept comfortably under the scheduler's default per-provider timeout_s
-# (15.0s, src/ai_pal/scheduler.py) so drive_screen's own SIGKILL cleanup
+# (15.0s, src/aitop/scheduler.py) so drive_screen's own SIGKILL cleanup
 # fires before asyncio.wait_for would otherwise cancel the awaiting
 # coroutine and leave the PTY child to run out its full budget unsupervised
 # (asyncio.to_thread cannot interrupt an already-running thread on cancel).

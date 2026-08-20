@@ -1,9 +1,9 @@
 import asyncio
 from pathlib import Path
 
-from ai_pal.models import Quota
-from ai_pal.providers import claude as claude_module
-from ai_pal.providers.claude import _CMD, _ROWS, _SEQ, _TOTAL_TIMEOUT, ClaudeProvider
+from aitop.models import Quota
+from aitop.providers import claude as claude_module
+from aitop.providers.claude import _CMD, _ROWS, _SEQ, _TOTAL_TIMEOUT, ClaudeProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "claude_usage.txt").read_text()
 
@@ -110,8 +110,8 @@ def test_fetch_offloads_blocking_call_to_a_thread(monkeypatch):
 
 
 def test_fetch_strips_anthropic_backend_override_env_vars():
-    # ai-pal's whole point is to report the *real* Claude subscription
-    # limits, even if ai-pal's own ambient environment has
+    # aitop's whole point is to report the *real* Claude subscription
+    # limits, even if aitop's own ambient environment has
     # ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL set to redirect
     # `claude` at a non-Anthropic backend (this project's design doc records
     # DeepSeek having been used as a stand-in backend for Claude Code in some
@@ -148,7 +148,7 @@ def test_rows_sized_to_avoid_panels_internal_auto_scroll():
 
 
 def test_total_timeout_leaves_margin_under_scheduler_default():
-    # src/ai_pal/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
+    # src/aitop/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
     # by default. drive_screen's own SIGKILL cleanup must fire comfortably
     # before that, since asyncio.to_thread cannot interrupt an
     # already-running thread on cancellation -- an orphaned PTY child would

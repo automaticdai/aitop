@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from ai_pal.cli import build_parser
-from ai_pal.config import load_config
+from aitop.cli import build_parser
+from aitop.config import load_config
 
 
 def test_defaults():

@@ -1,6 +1,6 @@
 import asyncio
 
-from ai_pal.providers.mock import MockProvider
+from aitop.providers.mock import MockProvider
 
 
 def test_mock_gemini_reports_two_named_groups():

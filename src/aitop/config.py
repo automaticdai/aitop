@@ -4,7 +4,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "ai-pal" / "config.toml"
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
 PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek")
 
 

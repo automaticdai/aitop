@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ai-pal")
+    parser = argparse.ArgumentParser(prog="aitop")
     # type=Path (not str): load_config() works with Path objects
     # (`path.exists()`, `path.read_text()`), so the conversion belongs at the
     # argparse boundary rather than leaving a bare str to blow up downstream.
@@ -17,13 +17,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> None:
     # Imported here rather than at module scope so build_parser() (and its
     # tests) don't have to drag in Textual and every provider adapter.
-    from .app import AIPalApp
+    from .app import AitopApp
     from .config import load_config
 
     args = build_parser().parse_args(argv)
 
     config = load_config(args.config)
-    AIPalApp(config=config, mock=args.mock).run()
+    AitopApp(config=config, mock=args.mock).run()
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from .pty_driver import drive_screen
 _SEQ = [(2.0, "\x1b[B\r"), (4.5, "/status\r"), (9.0, "/quit\r")]
 
 # Kept comfortably under the scheduler's default per-provider timeout_s
-# (15.0s, src/ai_pal/scheduler.py) so drive_screen's own SIGKILL cleanup
+# (15.0s, src/aitop/scheduler.py) so drive_screen's own SIGKILL cleanup
 # fires before asyncio.wait_for would otherwise cancel the awaiting
 # coroutine and leave the PTY child to run out its full budget unsupervised
 # (asyncio.to_thread cannot interrupt an already-running thread on cancel).

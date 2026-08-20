@@ -1,9 +1,9 @@
 import asyncio
 
-from ai_pal.app import AIPalApp, SnapshotRow
-from ai_pal.config import Config, ProviderConfig
-from ai_pal.models import Quota, UsageSnapshot
-from ai_pal.render import DISPLAY_NAME
+from aitop.app import AitopApp, SnapshotRow
+from aitop.config import Config, ProviderConfig
+from aitop.models import Quota, UsageSnapshot
+from aitop.render import DISPLAY_NAME
 
 
 def _run(coro_factory):
@@ -11,7 +11,7 @@ def _run(coro_factory):
         # A config with no providers keeps the poller from spawning anything
         # while the test drives the UI by hand.
         cfg = Config(refresh_interval_s=3600.0, providers={})
-        app = AIPalApp(config=cfg, mock=True)
+        app = AitopApp(config=cfg, mock=True)
         async with app.run_test() as pilot:
             await coro_factory(app, pilot)
 
@@ -61,7 +61,7 @@ def test_failed_snapshot_keeps_the_last_good_values_and_marks_the_row_stale():
         app._apply(UsageSnapshot("claude", ok=False, error="pty timed out"))
         await pilot.pause()
         text = str(app.query_one("#row-claude", SnapshotRow).content)
-        assert "25/100" in text
+        assert "25.0%" in text
         assert "stale" in text
         assert "pty timed out" in text
 
@@ -73,7 +73,7 @@ def test_quitting_stops_the_poller():
     # shutting down, stalling quit for up to a full fetch budget.
     async def scenario():
         cfg = Config(refresh_interval_s=3600.0, providers={})
-        app = AIPalApp(config=cfg, mock=True)
+        app = AitopApp(config=cfg, mock=True)
         async with app.run_test() as pilot:
             await pilot.pause()
             assert app.poller is not None
@@ -120,7 +120,7 @@ def test_mock_mode_with_an_unrecognized_provider_name_does_not_crash_the_app():
             refresh_interval_s=3600.0,
             providers={"nonsense": ProviderConfig(), "codex": ProviderConfig()},
         )
-        app = AIPalApp(config=cfg, mock=True)
+        app = AitopApp(config=cfg, mock=True)
         async with app.run_test() as pilot:
             row = app.query_one("#row-codex", SnapshotRow)
             # Wait for the (staggered) round to land, but never hang the suite.

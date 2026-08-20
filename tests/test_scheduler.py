@@ -1,9 +1,9 @@
 import asyncio
 import time
 
-from ai_pal.models import Quota, UsageSnapshot
-from ai_pal.providers.mock import MockProvider
-from ai_pal.scheduler import DEFAULT_STAGGER_S, Poller
+from aitop.models import Quota, UsageSnapshot
+from aitop.providers.mock import MockProvider
+from aitop.scheduler import DEFAULT_STAGGER_S, Poller
 
 
 class _Boom:

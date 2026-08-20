@@ -1,4 +1,4 @@
-from ai_pal.models import Balance, Quota, QuotaGroup, UsageSnapshot
+from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
 
 
 def test_quota_pct():
