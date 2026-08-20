@@ -16,5 +16,14 @@ class MockProvider:
     async def fetch(self) -> UsageSnapshot:
         if self.name == "deepseek":
             return UsageSnapshot(self.name, balance=Balance(225.05, "CNY"))
-        daily, weekly = _MOCK_QUOTAS[self.name]
+        # A config file naming a provider this table doesn't know about (a
+        # typo, or a name added to config ahead of an adapter) must surface as
+        # an ordinary failed snapshot, not a KeyError escaping into the poll
+        # loop and the UI.
+        quotas = _MOCK_QUOTAS.get(self.name)
+        if quotas is None:
+            return UsageSnapshot(
+                self.name, ok=False, error=f"no mock data for provider {self.name!r}"
+            )
+        daily, weekly = quotas
         return UsageSnapshot(self.name, daily=daily, weekly=weekly)
