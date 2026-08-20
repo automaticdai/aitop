@@ -24,8 +24,11 @@ class Config:
         return cls(providers={name: ProviderConfig() for name in PROVIDER_NAMES})
 
 
-def load_config(path: Path | None = None) -> Config:
-    path = path or DEFAULT_CONFIG_PATH
+def load_config(path: Path | str | None = None) -> Config:
+    # Coerce defensively: a caller handing over a bare string (argparse's
+    # default conversion, a test, an embedder) would otherwise reach
+    # `path.exists()` as a str and raise AttributeError.
+    path = Path(path) if path else DEFAULT_CONFIG_PATH
     if not path.exists():
         return Config.defaults()
 
