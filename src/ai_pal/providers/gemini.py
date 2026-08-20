@@ -98,9 +98,15 @@ class GeminiProvider:
 def _gemini_section(text: str) -> str:
     start = text.find(_GEMINI_SECTION_START)
     if start == -1:
-        # Header not present (format changed, or a single-group account) --
-        # fall back to the whole screen rather than returning no data.
-        return text
+        # Header not present (format changed, truncated capture, etc.) --
+        # return empty rather than falling back to the whole screen. The
+        # whole screen may still contain the "CLAUDE AND GPT MODELS"
+        # section's bars, and matching against those would silently
+        # attribute another model family's quota to "gemini". An empty
+        # section makes _WEEKLY_RE/_DAILY_RE find nothing, which correctly
+        # yields daily=None, weekly=None -- the same "missing data, not a
+        # fabricated value" contract as any other unmatched window.
+        return ""
     end = text.find(_GEMINI_SECTION_END, start)
     return text[start:end] if end != -1 else text[start:]
 

@@ -59,6 +59,30 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.weekly is None
 
 
+def test_parse_missing_gemini_header_does_not_leak_other_group_numbers():
+    # Regression guard for a real finding: if the "GEMINI MODELS" header is
+    # absent (truncated capture caught mid-scroll by the 11s SIGKILL, a
+    # vendor format change, etc.) but the screen still contains the
+    # "CLAUDE AND GPT MODELS" section with its own quota bars,
+    # _gemini_section() must NOT fall back to searching the whole text --
+    # that would silently attribute another model family's quota to
+    # "gemini". Missing header must yield daily=None, weekly=None, same as
+    # any other screen with no matching data.
+    text = (
+        "CLAUDE AND GPT MODELS\n"
+        "  Weekly Limit Remaining\n"
+        "    [██████████] 64.80%\n"
+        "    65% remaining\n\n"
+        "  Five Hour Limit Remaining\n"
+        "    [██████████] 100.00%\n"
+        "    Quota available\n"
+    )
+    snap = GeminiProvider.parse(text)
+    assert snap.ok is True
+    assert snap.daily is None
+    assert snap.weekly is None
+
+
 def test_parse_daily_and_weekly_present():
     text = (
         "GEMINI MODELS\n"
