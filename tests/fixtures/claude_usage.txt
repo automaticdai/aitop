@@ -1,0 +1,100 @@
+╭─── Claude Code v2.1.237 ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                        │
+│                Welcome back Steven!                │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                                                    │ ─────────────────────────────────────────────────────────────── │
+│                       ▐▛███▛█                      │ What's new                                                      │
+│                      ▝▜██████▀                     │ Fixed prompt caching for sessions using an LLM gateway or cust… │
+│                        ▝▝ ▝▝                       │ Added a built-in "Concise" output style: Claude leads with res… │
+│     Sonnet 5 with xhigh effort · Claude Pro ·      │ Added `ANTHROPIC_DEFAULT_MODEL` environment variable: sets the… │
+│     automatic.dai@gmail.com's Organization         │ /release-notes for more                                         │
+│ /…/46ddd14e-7f2b-47f2-a764-57e5cc6d8b45/scratchpad │                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ⚠ 1 MCP server needs authentication · run /mcp
+
+❯ /usage
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Settings  Status   Config   Usage   Stats
+
+  Session
+
+  Total cost:            $0.0000
+  Total duration (API):  0s
+  Total duration (wall): 4s
+  Total code changes:    0 lines added, 0 lines removed
+  Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+  Current session
+  ████████████▌                                      25% used
+  Resets 11pm (Europe/London)
+
+  Current week (all models)
+  ██████████                                         20% used
+  Resets Aug 25, 5am (Europe/London)
+  +50% weekly limits promo through Aug 31 · clau.de/cc-50-promo
+
+  What's contributing to your limits usage?
+  Approximate, based on local sessions on this machine — does not include other devices or claude.ai
+
+  Last 24h · these are independent characteristics of your usage, not a breakdown
+
+  67% of your usage was at >150k context
+   Longer sessions are more expensive even when cached. /compact mid-task, /clear
+   when switching to new tasks.
+
+  36% of your usage came from subagent-heavy sessions
+   Each subagent runs its own requests. Be deliberate about spawning them — and
+   consider configuring a cheaper model for simpler subagents.
+
+  14% of your usage came from subagents under "general-purpose"
+   If this runs frequently, consider configuring its subagents with a cheaper
+   model or tightening their prompts.
+
+  15% of your usage came from the plugin "superpowers"
+   Review what this plugin contributes — its agents, skills, and MCP tools all
+   count toward your limit.
+
+  Skills                  % of usage
+  /superpowers:systematic-deb…    6%
+  /superpowers:brainstorming      4%
+  /example-skills:webapp-test…    2%
+  /superpowers:using-git-work…    2%
+  /superpowers:writing-plans      1%
+  /superpowers:subagent-drive…    1%
+
+  Subagents               % of usage
+  general-purpose                14%
+  superpowers:subagent-driven…    1%
+
+  Plugins                 % of usage
+  superpowers                    15%
+  example-skills                  2%
+
+  d to day · w to week
+
+  Usage credits
+  Usage credits are off · /usage-credits to turn them on
+
+  Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
