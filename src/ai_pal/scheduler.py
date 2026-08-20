@@ -39,5 +39,8 @@ class Poller:
             except asyncio.TimeoutError:
                 pass
 
+    async def run_once(self) -> None:
+        await asyncio.gather(*(self._fetch_one(p) for p in self.providers))
+
     def stop(self) -> None:
         self._stop.set()
