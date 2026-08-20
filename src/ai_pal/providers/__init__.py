@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..config import Config
+from .codex import CodexProvider
 from .deepseek import DeepSeekProvider
 from .mock import MockProvider
 
@@ -14,5 +15,7 @@ def build_providers(config: Config, mock: bool = False) -> list:
             providers.append(MockProvider(name))
         elif name == "deepseek":
             providers.append(DeepSeekProvider())
-        # claude/codex/gemini adapters are wired in Tasks 8–10.
+        elif name == "codex":
+            providers.append(CodexProvider())
+        # claude/gemini adapters are wired in Tasks 9–10.
     return providers
