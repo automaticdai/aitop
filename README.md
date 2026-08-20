@@ -51,7 +51,7 @@ export DEEPSEEK_API_KEY=sk-...
 ai-pal
 ```
 
-For Codex/Gemini/Claude, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `ai-pal` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, that provider's row will show an error (e.g. a 401-style message) telling you to re-run the CLI to refresh it, rather than the app trying to fix it for you.
+For Codex/Gemini/Claude, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `ai-pal` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, its usage screen never renders (the CLI shows a login prompt instead), the adapter's regexes simply find nothing to match, and that provider's row quietly shows no quota data rather than a diagnosable error — there's no explicit expired-session detection, so a blank row is your cue to go re-run that CLI by hand and check its login state yourself. See "The PTY-scrape caveat" below for why this failure mode is silent rather than an explicit error.
 
 ### The PTY-scrape caveat
 
