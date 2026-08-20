@@ -108,6 +108,7 @@ class ClaudeProvider:
                 _SEQ,
                 rows=_ROWS,
                 total_timeout=_TOTAL_TIMEOUT,
+                done_when=_screen_has_quota,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -124,6 +125,20 @@ class ClaudeProvider:
             weekly=weekly,
             raw={"screen": text},
         )
+
+
+def _screen_has_quota(text: str) -> bool:
+    """True once the /usage panel's session/week bars are on screen.
+
+    Handed to drive_screen as its early-exit predicate: the capture is done
+    the moment the exact rows parse() reads are rendered, so a poll (and a
+    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
+    screen that already has everything. Deliberately the same regexes parse()
+    uses, so "done" can never mean less than "parseable"; drive_screen still
+    reads for a further settle window after this first fires, so the second
+    bar painted a frame later is not missed.
+    """
+    return bool(_SESSION_RE.search(text) or _WEEK_RE.search(text))
 
 
 def _quota_from_pct_used(text: str, pattern: re.Pattern[str]) -> Quota | None:

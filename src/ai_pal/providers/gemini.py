@@ -75,7 +75,11 @@ class GeminiProvider:
             # loop (all providers, the Textual UI) for up to total_timeout
             # on every poll. Offload it to a worker thread instead.
             text = await asyncio.to_thread(
-                drive_screen, ["agy"], _SEQ, total_timeout=_TOTAL_TIMEOUT
+                drive_screen,
+                ["agy"],
+                _SEQ,
+                total_timeout=_TOTAL_TIMEOUT,
+                done_when=_screen_has_quota,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -93,6 +97,23 @@ class GeminiProvider:
             weekly=weekly,
             raw={"screen": text},
         )
+
+
+def _screen_has_quota(text: str) -> bool:
+    """True once the GEMINI MODELS group's quota bars are on screen.
+
+    Handed to drive_screen as its early-exit predicate: the capture is done
+    the moment the exact rows parse() reads are rendered, so a poll (and a
+    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
+    screen that already has everything. Deliberately goes through
+    _gemini_section() and the same regexes parse() uses, so "done" can never
+    mean less than "parseable" -- in particular the other model group's bars
+    rendering first can't end the capture before Gemini's own group paints.
+    drive_screen still reads for a further settle window after this first
+    fires, so the second window's bar painted a frame later is not missed.
+    """
+    section = _gemini_section(text)
+    return bool(_DAILY_RE.search(section) or _WEEKLY_RE.search(section))
 
 
 def _gemini_section(text: str) -> str:

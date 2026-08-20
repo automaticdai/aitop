@@ -49,7 +49,11 @@ class CodexProvider:
             # loop (all providers, the Textual UI) for up to total_timeout
             # on every poll. Offload it to a worker thread instead.
             text = await asyncio.to_thread(
-                drive_screen, ["codex"], _SEQ, total_timeout=_TOTAL_TIMEOUT
+                drive_screen,
+                ["codex"],
+                _SEQ,
+                total_timeout=_TOTAL_TIMEOUT,
+                done_when=_screen_has_quota,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -66,6 +70,20 @@ class CodexProvider:
             weekly=weekly,
             raw={"screen": text},
         )
+
+
+def _screen_has_quota(text: str) -> bool:
+    """True once the /status panel's limit rows are on screen.
+
+    Handed to drive_screen as its early-exit predicate: the capture is done
+    the moment the exact rows parse() reads are rendered, so a poll (and a
+    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
+    screen that already has everything. Deliberately the same regexes parse()
+    uses, so "done" can never mean less than "parseable"; drive_screen still
+    reads for a further settle window after this first fires, so the second
+    window's row painted a frame later is not missed.
+    """
+    return bool(_DAILY_RE.search(text) or _WEEKLY_RE.search(text))
 
 
 def _quota_from_pct_left(text: str, pattern: re.Pattern[str]) -> Quota | None:
