@@ -8,7 +8,8 @@ from typing import Protocol
 class Quota:
     used: float
     limit: float
-    unit: str  # "messages" | "hours" | "tokens"
+    unit: str  # "messages" | "hours" | "tokens" | "%"
+    reset_note: str | None = None  # vendor-native reset text, e.g. "resets 14:11 on 27 Aug"
 
     @property
     def pct(self) -> float | None:
@@ -24,6 +25,19 @@ class Balance:
 
 
 @dataclass
+class QuotaGroup:
+    """A named quota group for providers that report more than one pool
+
+    (e.g. the Antigravity CLI reports separate Gemini and Claude/GPT-OSS
+    pools sharing one account) -- see UsageSnapshot.groups.
+    """
+
+    label: str
+    daily: Quota | None = None
+    weekly: Quota | None = None
+
+
+@dataclass
 class UsageSnapshot:
     provider: str
     ok: bool = True
@@ -32,6 +46,7 @@ class UsageSnapshot:
     daily: Quota | None = None
     weekly: Quota | None = None
     balance: Balance | None = None
+    groups: list[QuotaGroup] | None = None
     raw: dict = field(default_factory=dict)
 
 

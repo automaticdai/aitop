@@ -3,6 +3,7 @@ import asyncio
 from ai_pal.app import AIPalApp, SnapshotRow
 from ai_pal.config import Config, ProviderConfig
 from ai_pal.models import Quota, UsageSnapshot
+from ai_pal.render import DISPLAY_NAME
 
 
 def _run(coro_factory):
@@ -80,6 +81,17 @@ def test_quitting_stops_the_poller():
         assert poller._stop.is_set()
 
     asyncio.run(scenario())
+
+
+def test_each_row_is_a_bordered_panel_titled_with_its_display_name():
+    # Each provider gets its own visually separated block instead of being
+    # rendered together in one flat list -- a bordered panel titled with the
+    # human-facing name, so the internal provider key never needs repeating
+    # inside the body text.
+    for provider, display_name in DISPLAY_NAME.items():
+        row = SnapshotRow(provider)
+        assert row.border_title == display_name
+        assert row.styles.border_top is not None and row.styles.border_top[0] != "none"
 
 
 def test_row_without_a_prior_good_snapshot_still_shows_the_error():

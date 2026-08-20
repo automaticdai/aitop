@@ -1,6 +1,6 @@
 # ai-pal
 
-`ai-pal` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude, Codex, Gemini, and DeepSeek — and renders a daily/weekly usage bar (or an account balance, for DeepSeek) for each one in a single always-on-screen view, so you can tell at a glance which assistant you're about to rate-limit yourself out of.
+`ai-pal` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude Code, Codex, Antigravity (agy), and DeepSeek — and renders each one as its own bordered block with a daily/weekly usage bar (or an account balance, for DeepSeek), so you can tell at a glance which assistant you're about to rate-limit yourself out of.
 
 ## Install
 
@@ -28,7 +28,11 @@ In live mode, each provider only actually reports data if its own credentials/CL
 
 ### Reading a row
 
-Each provider row starts with a status dot: green when the last fetch returned usable numbers, amber when the fetch succeeded but nothing parseable came back (`no data (check the CLI's login state)`), red on an outright error. A failed fetch does **not** wipe the row: it keeps showing the last good numbers, marked `(stale — <error>)`, so one transient CLI timeout doesn't lose the values you were watching. Usage bars are colored by severity — green below 70% used, amber 70–90%, red above 90% — and the header carries the time of the most recent update.
+Each provider gets its own bordered block, titled with its display name (Claude Code / Codex / Antigravity (agy) / DeepSeek — the internal provider keys used in the config file are unchanged: `claude`, `codex`, `gemini`, `deepseek`). Inside, a status dot: green when the last fetch returned usable numbers, amber when the fetch succeeded but nothing parseable came back (`no data (check the CLI's login state)`), red on an outright error. A failed fetch does **not** wipe the row: it keeps showing the last good numbers, marked `(stale — <error>)`, so one transient CLI timeout doesn't lose the values you were watching. Usage bars are colored by severity — green below 70% used, amber 70–90%, red above 90% — and the header carries the time of the most recent update.
+
+When a CLI's screen shows a reset time for a quota window, that's captured verbatim (no timezone conversion or normalization — each vendor's own wording, as-is) and shown on a line under that bar.
+
+Antigravity's block shows two named groups rather than one bar, because the `agy` CLI reports two separate quota pools sharing the same account: "Gemini" (Gemini Flash/Pro) and "Claude & GPT-OSS" (a combined pool for Claude Opus/Sonnet and GPT-OSS models). Both are read from the same screen and rendered under their own labels.
 
 ### Key bindings
 
@@ -39,14 +43,14 @@ Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not
 
 ## What each provider needs
 
-`ai-pal` gets Claude, Codex, and Gemini usage a different way than DeepSeek's balance: DeepSeek has a normal HTTP usage API, but Codex and Gemini do not expose one that a personal/consumer account can call directly (Codex's usage endpoint is blocked by Cloudflare for consumer accounts; Gemini's old per-individual OAuth tier was deprecated by Google in favor of the Antigravity CLI). Claude's own CLI happens to be the most reliable way to read *its* own account's usage too, so all three are handled the same way for consistency. See "The PTY-scrape caveat" below.
+`ai-pal` gets Claude Code, Codex, and Antigravity usage a different way than DeepSeek's balance: DeepSeek has a normal HTTP usage API, but Codex and Antigravity do not expose one that a personal/consumer account can call directly (Codex's usage endpoint is blocked by Cloudflare for consumer accounts; the old per-individual Gemini OAuth tier was deprecated by Google in favor of the Antigravity CLI). Claude Code's own CLI happens to be the most reliable way to read *its* own account's usage too, so all three are handled the same way for consistency. See "The PTY-scrape caveat" below.
 
 | Provider | How it's fetched | What you need |
 |---|---|---|
 | **DeepSeek** | Direct HTTPS call to `https://api.deepseek.com/user/balance` | The `DEEPSEEK_API_KEY` environment variable set to a valid DeepSeek API key |
 | **Codex** | Screen-scrapes the `codex` CLI's `/status` panel over a PTY | The `codex` CLI installed and already logged in (`codex` on your `PATH`) |
-| **Gemini** | Screen-scrapes the Antigravity CLI's `/usage` panel over a PTY | The `agy` CLI (Antigravity, not the `antigravity` desktop app) installed and already logged in, with quota reported under a "GEMINI MODELS" section |
-| **Claude** | Screen-scrapes the `claude` CLI's `/usage` panel over a PTY | The `claude` CLI installed and already logged in |
+| **Antigravity (agy)** | Screen-scrapes the Antigravity CLI's `/usage` panel over a PTY | The `agy` CLI (Antigravity, not the `antigravity` desktop app) installed and already logged in; its screen reports quota under a "GEMINI MODELS" section and a "CLAUDE AND GPT MODELS" section, both of which are shown |
+| **Claude Code** | Screen-scrapes the `claude` CLI's `/usage` panel over a PTY | The `claude` CLI installed and already logged in |
 
 For DeepSeek, set the key before launching:
 
@@ -55,11 +59,11 @@ export DEEPSEEK_API_KEY=sk-...
 ai-pal
 ```
 
-For Codex/Gemini/Claude, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `ai-pal` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, its usage screen never renders (the CLI shows a login prompt instead) and the adapter's regexes simply find nothing to match. There's no explicit expired-session detection, so this isn't reported as a specific error — the row shows an amber dot and `no data (check the CLI's login state)`, which is your cue to go re-run that CLI by hand and check its login state yourself. See "The PTY-scrape caveat" below for why this failure mode can't be distinguished from other parse failures.
+For Codex/Antigravity/Claude Code, "already logged in" means: run that vendor's CLI by hand once (`codex`, `agy`, or `claude`) and complete whatever login/auth flow it prompts for, so it has a working, non-expired session saved on disk. `ai-pal` does not perform any login flow itself and does not refresh expired tokens — it only reads whatever session the CLI already has. If a CLI's session has expired, its usage screen never renders (the CLI shows a login prompt instead) and the adapter's regexes simply find nothing to match. There's no explicit expired-session detection, so this isn't reported as a specific error — the row shows an amber dot and `no data (check the CLI's login state)`, which is your cue to go re-run that CLI by hand and check its login state yourself. See "The PTY-scrape caveat" below for why this failure mode can't be distinguished from other parse failures.
 
 ### The PTY-scrape caveat
 
-For Codex, Gemini, and Claude, `ai-pal` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), drives it with a scripted sequence of keystrokes (dismiss any first-run dialog, run the CLI's own usage/status slash command, wait for it to render), and then parses the resulting on-screen text with regular expressions to pull out percentages.
+For Codex, Antigravity, and Claude Code, `ai-pal` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), drives it with a scripted sequence of keystrokes (dismiss any first-run dialog, run the CLI's own usage/status slash command, wait for it to render), and then parses the resulting on-screen text with regular expressions to pull out percentages.
 
 This is a deliberate v1 tradeoff, not an accident or a bug:
 

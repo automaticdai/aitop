@@ -33,9 +33,11 @@ _TOTAL_TIMEOUT = 11.0
 # (see tests/fixtures/codex_usage.txt, captured live: this account only has
 # a "Weekly limit" row, no "5h"/"Daily" row). Match generically so either
 # label is picked up when present, and treat a missing label as no data
-# for that window rather than fabricating a value.
-_WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left")
-_DAILY_RE = re.compile(r"(?:5h|Daily) limit:.*?(\d{1,3})%\s*left")
+# for that window rather than fabricating a value. The reset time (when
+# present) trails the percentage in parens, e.g. "100% left (resets 14:11
+# on 27 Aug)" -- captured verbatim, no timezone/date parsing.
+_WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
+_DAILY_RE = re.compile(r"(?:5h|Daily) limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 
 
 class CodexProvider:
@@ -91,4 +93,5 @@ def _quota_from_pct_left(text: str, pattern: re.Pattern[str]) -> Quota | None:
     if not m:
         return None
     pct_left = float(m.group(1))
-    return Quota(used=100.0 - pct_left, limit=100.0, unit="%")
+    reset_note = m.group(2) or None
+    return Quota(used=100.0 - pct_left, limit=100.0, unit="%", reset_note=reset_note)

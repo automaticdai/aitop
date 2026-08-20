@@ -9,16 +9,29 @@ from textual.widgets import Footer, Header, Static
 from .config import Config
 from .models import UsageSnapshot
 from .providers import build_providers
-from .render import has_data, render_snapshot, render_stale
+from .render import DISPLAY_NAME, has_data, render_snapshot, render_stale
 from .scheduler import Poller
 
 _PROVIDER_ORDER = ("claude", "codex", "gemini", "deepseek")
 
 
 class SnapshotRow(Static):
+    # Each provider renders as its own visually separated block (rather
+    # than one flat undifferentiated list) -- a bordered panel titled with
+    # the human-facing display name, so the body text never needs to repeat
+    # the provider's identity.
+    DEFAULT_CSS = """
+    SnapshotRow {
+        border: round $primary;
+        padding: 0 1;
+        margin: 0 0 1 0;
+    }
+    """
+
     def __init__(self, provider: str) -> None:
         super().__init__("loading…", id=f"row-{provider}")
         self.provider = provider
+        self.border_title = DISPLAY_NAME.get(provider, provider)
         self._last_good: UsageSnapshot | None = None
 
     def apply(self, snap: UsageSnapshot) -> None:

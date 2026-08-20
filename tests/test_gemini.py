@@ -15,29 +15,43 @@ def test_parse_real_usage_screen():
     # (Antigravity CLI 1.1.16, driving the "gemini" provider identity per
     # config.PROVIDER_NAMES -- the underlying `gemini` CLI binary itself is
     # a dead end for this account, see the superseded task-9-report.md).
-    # This account's Gemini group shows 94.33% weekly remaining (5.67%
-    # used) and 100.00% five-hour remaining (0% used). The screen also
-    # contains a second "CLAUDE AND GPT MODELS" group (64.80% weekly
-    # remaining) that must NOT leak into this provider's numbers.
+    # agy shares one account across two quota pools -- this provider now
+    # reports both as named groups instead of just its own: Gemini (94.33%
+    # weekly remaining -> 5.67% used, 100% five-hour remaining -> 0% used)
+    # and the combined Claude/GPT-OSS pool (64.80% weekly remaining ->
+    # 35.2% used, 100% five-hour remaining -> 0% used). Top-level
+    # daily/weekly stay None -- groups is the sole source of this
+    # provider's data, so nothing is shown twice.
     snap = GeminiProvider.parse(FIXTURE)
     assert snap.provider == "gemini"
     assert snap.ok is True
     assert snap.error is None
-    assert snap.weekly is not None
-    assert snap.weekly.limit == 100.0
-    assert snap.weekly.unit == "%"
-    assert snap.weekly.used == pytest.approx(5.67)
-    assert snap.daily == Quota(used=0.0, limit=100.0, unit="%")
+    assert snap.daily is None
+    assert snap.weekly is None
     assert snap.raw == {"screen": FIXTURE}
+
+    assert [g.label for g in snap.groups] == ["Gemini", "Claude & GPT-OSS"]
+
+    gemini_group = snap.groups[0]
+    assert gemini_group.weekly.used == pytest.approx(5.67)
+    assert gemini_group.weekly.limit == 100.0
+    assert gemini_group.weekly.unit == "%"
+    assert gemini_group.weekly.reset_note == "Refreshes in 97h 24m"
+    assert gemini_group.daily == Quota(used=0.0, limit=100.0, unit="%")
+
+    other_group = snap.groups[1]
+    assert other_group.weekly.used == pytest.approx(35.2)
+    assert other_group.weekly.reset_note == "Refreshes in 97h 25m"
+    assert other_group.daily == Quota(used=0.0, limit=100.0, unit="%")
 
 
 def test_parse_ignores_other_model_groups_sharing_the_screen():
     # Regression guard for the GEMINI MODELS / CLAUDE AND GPT MODELS section
     # scoping: if scoping ever broke and the parser matched the first
-    # "Weekly Limit Remaining" anywhere in the text, this would still pass
-    # by accident on the real fixture (Gemini's group appears first). This
-    # synthetic case puts a very different Claude/GPT number in front to
-    # prove section scoping (not "first match") is what's actually used.
+    # "Weekly Limit Remaining" anywhere in the text, both groups would come
+    # back with the same (wrong) number. This synthetic case puts a very
+    # different Claude/GPT number in front to prove each group's own
+    # section (not "first match") is what's actually used.
     text = (
         "CLAUDE AND GPT MODELS\n"
         "  Weekly Limit Remaining\n"
@@ -49,7 +63,38 @@ def test_parse_ignores_other_model_groups_sharing_the_screen():
         "    99% remaining\n"
     )
     snap = GeminiProvider.parse(text)
-    assert snap.weekly == Quota(used=1.0, limit=100.0, unit="%")
+    assert snap.groups[0].label == "Gemini"
+    assert snap.groups[0].weekly == Quota(used=1.0, limit=100.0, unit="%")
+    assert snap.groups[1].label == "Claude & GPT-OSS"
+    assert snap.groups[1].weekly == Quota(used=99.0, limit=100.0, unit="%")
+
+
+def test_parse_bounds_the_other_group_section_at_its_footer_marker():
+    # Regression guard for the Claude/GPT-OSS section's own end-boundary
+    # (mirrors the discipline already required of the Gemini section):
+    # realistic screen order (Gemini group, then Claude/GPT-OSS group, then
+    # the panel's footer marker) with a THIRD, unrelated numeric group
+    # placed after the footer marker -- if _OTHER_SECTION_END didn't stop
+    # the search there, that trailing number could leak into the
+    # Claude/GPT-OSS group's slot.
+    text = (
+        "GEMINI MODELS\n"
+        "  Weekly Limit Remaining\n"
+        "    [██████████] 50.00%\n"
+        "    50% remaining\n\n"
+        "CLAUDE AND GPT MODELS\n"
+        "  Weekly Limit Remaining\n"
+        "    [██████████] 64.80%\n"
+        "    65% remaining\n\n"
+        "Within each group, models share a weekly limit...\n\n"
+        "SOME OTHER MODELS\n"
+        "  Weekly Limit Remaining\n"
+        "    [██████████] 1.00%\n"
+        "    1% remaining\n"
+    )
+    snap = GeminiProvider.parse(text)
+    assert snap.groups[1].label == "Claude & GPT-OSS"
+    assert snap.groups[1].weekly == Quota(used=35.2, limit=100.0, unit="%")
 
 
 def test_parse_missing_windows_returns_none_not_raise():
@@ -57,17 +102,18 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.ok is True
     assert snap.daily is None
     assert snap.weekly is None
+    assert snap.groups is None
 
 
 def test_parse_missing_gemini_header_does_not_leak_other_group_numbers():
     # Regression guard for a real finding: if the "GEMINI MODELS" header is
     # absent (truncated capture caught mid-scroll by the 11s SIGKILL, a
     # vendor format change, etc.) but the screen still contains the
-    # "CLAUDE AND GPT MODELS" section with its own quota bars,
-    # _gemini_section() must NOT fall back to searching the whole text --
-    # that would silently attribute another model family's quota to
-    # "gemini". Missing header must yield daily=None, weekly=None, same as
-    # any other screen with no matching data.
+    # "CLAUDE AND GPT MODELS" section with its own quota bars, the Gemini
+    # group must NOT fall back to searching the whole text -- that would
+    # silently attribute another model family's quota to Gemini's own slot.
+    # The other group's genuinely-present data is unaffected and still
+    # surfaces under its own label.
     text = (
         "CLAUDE AND GPT MODELS\n"
         "  Weekly Limit Remaining\n"
@@ -79,8 +125,11 @@ def test_parse_missing_gemini_header_does_not_leak_other_group_numbers():
     )
     snap = GeminiProvider.parse(text)
     assert snap.ok is True
-    assert snap.daily is None
-    assert snap.weekly is None
+    assert snap.groups[0].label == "Gemini"
+    assert snap.groups[0].daily is None
+    assert snap.groups[0].weekly is None
+    assert snap.groups[1].label == "Claude & GPT-OSS"
+    assert snap.groups[1].weekly == Quota(used=35.2, limit=100.0, unit="%")
 
 
 def test_parse_daily_and_weekly_present():
@@ -94,8 +143,9 @@ def test_parse_daily_and_weekly_present():
         "    55% remaining · Refreshes soon\n"
     )
     snap = GeminiProvider.parse(text)
-    assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%")
-    assert snap.daily == Quota(used=45.0, limit=100.0, unit="%")
+    group = snap.groups[0]
+    assert group.weekly == Quota(used=20.0, limit=100.0, unit="%", reset_note="Refreshes in 90h")
+    assert group.daily == Quota(used=45.0, limit=100.0, unit="%", reset_note="Refreshes soon")
 
 
 def test_fetch_never_raises_on_pty_failure(monkeypatch):

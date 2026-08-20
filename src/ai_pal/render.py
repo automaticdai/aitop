@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.markup import escape
 
-from .models import Quota, UsageSnapshot
+from .models import Quota, QuotaGroup, UsageSnapshot
 
 # Spec §6 color thresholds for the usage bars: green below 70%, amber
 # 70-90%, red above 90% (of the quota *used*).
@@ -12,6 +12,15 @@ RED_PCT = 90.0
 # Spec §6 status dot: green = ok, amber = nothing usable came back, red =
 # error (including a stale row still showing its last good numbers, per §7).
 _DOT = "●"
+
+# Internal provider keys (config schema, PROVIDER_NAMES) never change --
+# this is purely what gets shown to the user (app.py's panel border titles).
+DISPLAY_NAME = {
+    "claude": "Claude Code",
+    "codex": "Codex",
+    "gemini": "Antigravity (agy)",
+    "deepseek": "DeepSeek",
+}
 
 
 def fmt_pct(pct: float | None) -> str:
@@ -39,39 +48,57 @@ def bar_color(pct: float | None) -> str:
 
 def has_data(snap: UsageSnapshot) -> bool:
     """True if the snapshot carries anything worth displaying."""
-    return snap.daily is not None or snap.weekly is not None or snap.balance is not None
+    return (
+        snap.daily is not None
+        or snap.weekly is not None
+        or snap.balance is not None
+        or bool(snap.groups)
+    )
 
 
 def _dot(color: str) -> str:
     return f"[{color}]{_DOT}[/{color}]"
 
 
-def _quota_line(label: str, q: Quota) -> str:
+def _quota_line(label: str, q: Quota) -> list[str]:
     color = bar_color(q.pct)
     bar = render_bar(q.pct)
-    return (
+    lines = [
         f"{label:<8}[{color}]{bar}[/{color}] "
         f"{q.used:.0f}/{q.limit:.0f} {escape(q.unit)} ({fmt_pct(q.pct)})"
-    )
+    ]
+    if q.reset_note:
+        lines.append(f"        {escape(q.reset_note)}")
+    return lines
+
+
+def _group_lines(group: QuotaGroup) -> list[str]:
+    lines = [escape(group.label)]
+    if group.weekly is not None:
+        lines.extend(_quota_line("weekly", group.weekly))
+    if group.daily is not None:
+        lines.extend(_quota_line("daily", group.daily))
+    return lines
 
 
 def _value_lines(snap: UsageSnapshot) -> list[str]:
     lines = []
     if snap.daily is not None:
-        lines.append(_quota_line("daily", snap.daily))
+        lines.extend(_quota_line("daily", snap.daily))
     if snap.weekly is not None:
-        lines.append(_quota_line("weekly", snap.weekly))
+        lines.extend(_quota_line("weekly", snap.weekly))
     if snap.balance is not None:
         lines.append(
             f"balance  {snap.balance.amount:.2f} {escape(snap.balance.currency)}"
         )
+    for group in snap.groups or []:
+        lines.extend(_group_lines(group))
     return lines
 
 
 def render_snapshot(snap: UsageSnapshot) -> str:
-    provider = escape(snap.provider)
     if not snap.ok:
-        return f"{_dot('red')} {provider}: ERROR — {escape(snap.error or 'unknown error')}"
+        return f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}"
     lines = _value_lines(snap)
     if not lines:
         # ok=True with nothing parsed is the most likely real-world PTY
@@ -79,14 +106,11 @@ def render_snapshot(snap: UsageSnapshot) -> str:
         # by the timeout). The adapters deliberately return None rather than
         # fabricate a number and deliberately leave ok=True, so the diagnostic
         # has to be added here, at the rendering layer.
-        return f"{_dot('yellow')} {provider}: no data (check the CLI's login state)"
-    return "\n".join([f"{_dot('green')} {provider}", *lines])
+        return f"{_dot('yellow')} no data (check the CLI's login state)"
+    return "\n".join([_dot('green'), *lines])
 
 
 def render_stale(last_good: UsageSnapshot, error: str | None) -> str:
     """Spec §7: a failed fetch keeps showing the last good value, marked stale."""
-    header = (
-        f"{_dot('red')} {escape(last_good.provider)} "
-        f"[dim](stale — {escape(error or 'fetch failed')})[/dim]"
-    )
+    header = f"{_dot('red')} [dim](stale — {escape(error or 'fetch failed')})[/dim]"
     return "\n".join([header, *_value_lines(last_good)])

@@ -17,7 +17,9 @@ def test_parse_real_status_screen():
     assert snap.provider == "codex"
     assert snap.ok is True
     assert snap.error is None
-    assert snap.weekly == Quota(used=0.0, limit=100.0, unit="%")
+    assert snap.weekly == Quota(
+        used=0.0, limit=100.0, unit="%", reset_note="resets 14:11 on 27 Aug"
+    )
     assert snap.daily is None
     assert snap.raw == {"screen": FIXTURE}
 
@@ -35,8 +37,14 @@ def test_parse_daily_and_weekly_present():
         "  Weekly limit:   [████████████████░░░░] 80% left (resets later)\n"
     )
     snap = CodexProvider.parse(text)
-    assert snap.daily == Quota(used=45.0, limit=100.0, unit="%")
-    assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%")
+    assert snap.daily == Quota(used=45.0, limit=100.0, unit="%", reset_note="resets soon")
+    assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%", reset_note="resets later")
+
+
+def test_parse_reset_note_is_none_when_no_parenthetical_present():
+    text = "  Weekly limit:   [████████████████░░░░] 80% left\n"
+    snap = CodexProvider.parse(text)
+    assert snap.weekly.reset_note is None
 
 
 def test_fetch_never_raises_on_pty_failure(monkeypatch):

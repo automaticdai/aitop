@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-from ..models import Quota, UsageSnapshot
+from ..models import Quota, QuotaGroup, UsageSnapshot
 from .pty_driver import drive_screen
 
 # Gemini's provider identity ("gemini") is driven by the Antigravity CLI
@@ -47,21 +47,34 @@ _SEQ = [(2.0, "\r"), (4.5, "/usage\r")]
 _TOTAL_TIMEOUT = 11.0
 
 # agy's `/usage` screen groups quota by model family sharing a pool -- this
-# account shows "GEMINI MODELS" (Gemini Flash/Pro) and "CLAUDE AND GPT
-# MODELS" (Claude Opus/Sonnet, GPT-OSS) as two separate groups, each with
-# its own Weekly/Five-Hour bars (tests/fixtures/gemini_usage.txt). This
-# adapter's identity is specifically Gemini's own quota, so windows are
-# read from the "GEMINI MODELS" section only -- never the other group's
-# numbers, even though both appear in the same raw screen text.
+# account shows two groups: "GEMINI MODELS" (Gemini Flash/Pro) and "CLAUDE
+# AND GPT MODELS" (a single combined pool for Claude Opus/Sonnet + GPT-OSS),
+# each with its own Weekly/Five-Hour bars (tests/fixtures/gemini_usage.txt).
+# Both groups are surfaced, each scoped to its own section of the screen so
+# neither group's numbers can leak into the other's.
 _GEMINI_SECTION_START = "GEMINI MODELS"
 _GEMINI_SECTION_END = "CLAUDE AND GPT MODELS"
+_OTHER_SECTION_START = "CLAUDE AND GPT MODELS"
+# The footer prose ("Within each group, models share a weekly limit...")
+# is the real end-of-panel marker in the fixture; bounding on it (rather
+# than reading to end-of-text) keeps this section scoped the same way the
+# Gemini section is, in case anything else ever follows it on screen.
+_OTHER_SECTION_END = "Within each group"
 
 # The percentage sits on the bar-caption line right after "[...]", not on
 # the descriptive line below it -- that line's wording varies ("NN%
 # remaining · Refreshes in ..." vs "Quota available" at 100%), so anchoring
-# on the bar line is what stays reliable across both states.
-_WEEKLY_RE = re.compile(r"Weekly Limit Remaining\s*\n\s*\[[^\]]*\]\s*(\d+(?:\.\d+)?)%")
-_DAILY_RE = re.compile(r"Five Hour Limit Remaining\s*\n\s*\[[^\]]*\]\s*(\d+(?:\.\d+)?)%")
+# on the bar line is what stays reliable across both states. The reset time
+# (when present) is captured verbatim from that next line -- "Quota
+# available" (100% remaining, nothing to reset) correctly yields no note.
+_WEEKLY_RE = re.compile(
+    r"Weekly Limit Remaining\s*\n\s*\[[^\]]*\]\s*(\d+(?:\.\d+)?)%"
+    r"(?:\s*\n\s*(?:\d+%\s*remaining\s*·\s*)?(Refreshes[^\n]*))?"
+)
+_DAILY_RE = re.compile(
+    r"Five Hour Limit Remaining\s*\n\s*\[[^\]]*\]\s*(\d+(?:\.\d+)?)%"
+    r"(?:\s*\n\s*(?:\d+%\s*remaining\s*·\s*)?(Refreshes[^\n]*))?"
+)
 
 
 class GeminiProvider:
@@ -87,48 +100,55 @@ class GeminiProvider:
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
-        section = _gemini_section(text)
-        daily = _quota_from_pct_remaining(section, _DAILY_RE)
-        weekly = _quota_from_pct_remaining(section, _WEEKLY_RE)
-        return UsageSnapshot(
-            "gemini",
-            ok=True,
-            daily=daily,
-            weekly=weekly,
-            raw={"screen": text},
-        )
+        gemini_section = _section(text, _GEMINI_SECTION_START, _GEMINI_SECTION_END)
+        gemini_daily = _quota_from_pct_remaining(gemini_section, _DAILY_RE)
+        gemini_weekly = _quota_from_pct_remaining(gemini_section, _WEEKLY_RE)
+
+        other_section = _section(text, _OTHER_SECTION_START, _OTHER_SECTION_END)
+        other_daily = _quota_from_pct_remaining(other_section, _DAILY_RE)
+        other_weekly = _quota_from_pct_remaining(other_section, _WEEKLY_RE)
+
+        groups = None
+        if any(q is not None for q in (gemini_daily, gemini_weekly, other_daily, other_weekly)):
+            groups = [
+                QuotaGroup(label="Gemini", daily=gemini_daily, weekly=gemini_weekly),
+                QuotaGroup(label="Claude & GPT-OSS", daily=other_daily, weekly=other_weekly),
+            ]
+
+        # Top-level daily/weekly deliberately stay None: groups is this
+        # provider's sole source of data now, so nothing renders twice.
+        return UsageSnapshot("gemini", ok=True, groups=groups, raw={"screen": text})
 
 
 def _screen_has_quota(text: str) -> bool:
-    """True once the GEMINI MODELS group's quota bars are on screen.
+    """True once both model groups' quota bars are on screen.
 
     Handed to drive_screen as its early-exit predicate: the capture is done
     the moment the exact rows parse() reads are rendered, so a poll (and a
     quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
-    screen that already has everything. Deliberately goes through
-    _gemini_section() and the same regexes parse() uses, so "done" can never
-    mean less than "parseable" -- in particular the other model group's bars
-    rendering first can't end the capture before Gemini's own group paints.
-    drive_screen still reads for a further settle window after this first
-    fires, so the second window's bar painted a frame later is not missed.
+    screen that already has everything. The Claude/GPT-OSS group renders
+    below the Gemini group, so checking only the Gemini section (as this
+    used to) could fire before the second group has painted, losing its
+    numbers for that poll. The footer text is the last thing the panel
+    renders -- once it's present, both groups above it are guaranteed to
+    have rendered too, top-to-bottom, in the same pass.
     """
-    section = _gemini_section(text)
-    return bool(_DAILY_RE.search(section) or _WEEKLY_RE.search(section))
+    return _OTHER_SECTION_END in text
 
 
-def _gemini_section(text: str) -> str:
-    start = text.find(_GEMINI_SECTION_START)
+def _section(text: str, start_marker: str, end_marker: str) -> str:
+    start = text.find(start_marker)
     if start == -1:
         # Header not present (format changed, truncated capture, etc.) --
         # return empty rather than falling back to the whole screen. The
-        # whole screen may still contain the "CLAUDE AND GPT MODELS"
-        # section's bars, and matching against those would silently
-        # attribute another model family's quota to "gemini". An empty
-        # section makes _WEEKLY_RE/_DAILY_RE find nothing, which correctly
-        # yields daily=None, weekly=None -- the same "missing data, not a
-        # fabricated value" contract as any other unmatched window.
+        # screen may still contain the *other* group's bars, and matching
+        # against those would silently attribute another model family's
+        # quota to this one. An empty section makes _WEEKLY_RE/_DAILY_RE
+        # find nothing, which correctly yields daily=None, weekly=None --
+        # the same "missing data, not a fabricated value" contract as any
+        # other unmatched window.
         return ""
-    end = text.find(_GEMINI_SECTION_END, start)
+    end = text.find(end_marker, start + len(start_marker))
     return text[start:end] if end != -1 else text[start:]
 
 
@@ -137,4 +157,5 @@ def _quota_from_pct_remaining(text: str, pattern: re.Pattern[str]) -> Quota | No
     if not m:
         return None
     pct_remaining = float(m.group(1))
-    return Quota(used=100.0 - pct_remaining, limit=100.0, unit="%")
+    reset_note = m.group(2) or None
+    return Quota(used=100.0 - pct_remaining, limit=100.0, unit="%", reset_note=reset_note)

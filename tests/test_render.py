@@ -1,5 +1,6 @@
-from ai_pal.models import Balance, Quota, UsageSnapshot
+from ai_pal.models import Balance, Quota, QuotaGroup, UsageSnapshot
 from ai_pal.render import (
+    DISPLAY_NAME,
     bar_color,
     fmt_pct,
     has_data,
@@ -30,14 +31,28 @@ def test_bar_color_thresholds():
     assert bar_color(None) == "dim"
 
 
+def test_display_name_maps_internal_keys_to_shown_text():
+    # Internal provider keys (config schema, PROVIDER_NAMES) stay as-is;
+    # only what's actually shown to the user changes.
+    assert DISPLAY_NAME == {
+        "claude": "Claude Code",
+        "codex": "Codex",
+        "gemini": "Antigravity (agy)",
+        "deepseek": "DeepSeek",
+    }
+
+
 def test_render_snapshot_quota():
+    # The provider's identity is carried by the panel's border title
+    # (app.py), not repeated in the body -- render_snapshot only needs to
+    # produce the status + data lines.
     snap = UsageSnapshot(
         "codex",
         daily=Quota(12, 50, "messages"),
         weekly=Quota(30, 200, "messages"),
     )
     out = render_snapshot(snap)
-    assert out.splitlines()[0] == "[green]●[/green] codex"
+    assert out.splitlines()[0] == "[green]●[/green]"
     assert "12/50" in out
     assert "30/200" in out
     assert "messages" in out
@@ -79,9 +94,38 @@ def test_render_snapshot_ok_but_empty_says_no_data():
     # All three PTY adapters return ok=True with everything None when their
     # regexes match nothing (expired session, vendor UI change, truncated
     # capture) -- deliberately, rather than fabricating numbers. Rendering
-    # must not reduce that to a bare provider name with no diagnostic.
+    # must not reduce that to a blank body with no diagnostic.
     out = render_snapshot(UsageSnapshot("gemini"))
-    assert out == "[yellow]●[/yellow] gemini: no data (check the CLI's login state)"
+    assert out == "[yellow]●[/yellow] no data (check the CLI's login state)"
+
+
+def test_render_snapshot_quota_line_shows_reset_note():
+    snap = UsageSnapshot("codex", weekly=Quota(0, 100, "%", reset_note="resets 14:11 on 27 Aug"))
+    lines = render_snapshot(snap).splitlines()
+    assert lines[1].startswith("weekly  ")
+    assert lines[2].strip() == "resets 14:11 on 27 Aug"
+
+
+def test_render_snapshot_quota_line_omits_reset_line_when_absent():
+    snap = UsageSnapshot("codex", weekly=Quota(0, 100, "%"))
+    out = render_snapshot(snap)
+    assert "resets" not in out
+
+
+def test_render_snapshot_groups():
+    snap = UsageSnapshot(
+        "gemini",
+        groups=[
+            QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%")),
+            QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%", reset_note="Refreshes in 97h 25m")),
+        ],
+    )
+    out = render_snapshot(snap)
+    assert "Gemini" in out
+    assert "Claude & GPT-OSS" in out
+    assert "6/100" in out
+    assert "35/100" in out
+    assert "Refreshes in 97h 25m" in out
 
 
 def test_render_stale_keeps_last_good_values():
@@ -97,7 +141,18 @@ def test_render_stale_keeps_last_good_values():
     assert "20/100" in out
 
 
+def test_render_stale_keeps_last_good_groups():
+    last_good = UsageSnapshot(
+        "gemini",
+        groups=[QuotaGroup(label="Gemini", weekly=Quota(6, 100, "%"))],
+    )
+    out = render_stale(last_good, "pty timed out")
+    assert "Gemini" in out
+    assert "6/100" in out
+
+
 def test_has_data():
     assert has_data(UsageSnapshot("codex", daily=Quota(1, 2, "messages")))
     assert has_data(UsageSnapshot("deepseek", balance=Balance(1.0, "CNY")))
+    assert has_data(UsageSnapshot("gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(1, 2, "%"))]))
     assert not has_data(UsageSnapshot("codex"))

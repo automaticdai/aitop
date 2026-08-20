@@ -87,9 +87,15 @@ _ROWS = 100
 # Pro-plan account and never observed here) can't be mismatched into this
 # provider's single weekly slot -- same "don't let an adjacent, differently-
 # scoped number leak in" discipline Task 9's review required for Gemini's
-# model-group sections.
-_SESSION_RE = re.compile(r"Current session\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used")
-_WEEK_RE = re.compile(r"Current week \(all models\)\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used")
+# model-group sections. The reset time (when present) is its own "Resets
+# ..." line directly below the bar -- captured verbatim, no timezone/date
+# parsing.
+_SESSION_RE = re.compile(
+    r"Current session\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used\s*\n\s*(Resets[^\n]*)?"
+)
+_WEEK_RE = re.compile(
+    r"Current week \(all models\)\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used\s*\n\s*(Resets[^\n]*)?"
+)
 
 
 class ClaudeProvider:
@@ -146,4 +152,5 @@ def _quota_from_pct_used(text: str, pattern: re.Pattern[str]) -> Quota | None:
     if not m:
         return None
     pct_used = float(m.group(1))
-    return Quota(used=pct_used, limit=100.0, unit="%")
+    reset_note = m.group(2) or None
+    return Quota(used=pct_used, limit=100.0, unit="%", reset_note=reset_note)

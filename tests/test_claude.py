@@ -21,8 +21,12 @@ def test_parse_real_usage_screen():
     assert snap.provider == "claude"
     assert snap.ok is True
     assert snap.error is None
-    assert snap.daily == Quota(used=25.0, limit=100.0, unit="%")
-    assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%")
+    assert snap.daily == Quota(
+        used=25.0, limit=100.0, unit="%", reset_note="Resets 11pm (Europe/London)"
+    )
+    assert snap.weekly == Quota(
+        used=20.0, limit=100.0, unit="%", reset_note="Resets Aug 25, 5am (Europe/London)"
+    )
     assert snap.raw == {"screen": FIXTURE}
 
 
@@ -43,8 +47,18 @@ def test_parse_daily_and_weekly_present():
         "  Resets Aug 25, 5am (Europe/London)\n"
     )
     snap = ClaudeProvider.parse(text)
-    assert snap.daily == Quota(used=55.0, limit=100.0, unit="%")
-    assert snap.weekly == Quota(used=80.0, limit=100.0, unit="%")
+    assert snap.daily == Quota(
+        used=55.0, limit=100.0, unit="%", reset_note="Resets 11pm (Europe/London)"
+    )
+    assert snap.weekly == Quota(
+        used=80.0, limit=100.0, unit="%", reset_note="Resets Aug 25, 5am (Europe/London)"
+    )
+
+
+def test_parse_reset_note_is_none_when_missing():
+    text = "  Current session\n  ████████████▌ 55% used\n"
+    snap = ClaudeProvider.parse(text)
+    assert snap.daily.reset_note is None
 
 
 def test_parse_does_not_match_per_model_weekly_variant():
