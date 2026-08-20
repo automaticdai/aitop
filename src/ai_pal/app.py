@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Static
@@ -7,7 +9,7 @@ from textual.widgets import Footer, Header, Static
 from .config import Config
 from .models import UsageSnapshot
 from .providers import build_providers
-from .render import render_snapshot
+from .render import has_data, render_snapshot, render_stale
 from .scheduler import Poller
 
 _PROVIDER_ORDER = ("claude", "codex", "gemini", "deepseek")
@@ -17,9 +19,20 @@ class SnapshotRow(Static):
     def __init__(self, provider: str) -> None:
         super().__init__("loading…", id=f"row-{provider}")
         self.provider = provider
+        self._last_good: UsageSnapshot | None = None
 
     def apply(self, snap: UsageSnapshot) -> None:
-        self.update(render_snapshot(snap))
+        # Spec §7: on failure the row is marked stale and keeps showing the
+        # last good value. PTY scraping is acknowledged-fragile, so a single
+        # transient timeout must not wipe out numbers that were fine 30s ago.
+        if snap.ok:
+            if has_data(snap):
+                self._last_good = snap
+            self.update(render_snapshot(snap))
+        elif self._last_good is not None:
+            self.update(render_stale(self._last_good, snap.error))
+        else:
+            self.update(render_snapshot(snap))
 
 
 class AIPalApp(App):
@@ -49,10 +62,28 @@ class AIPalApp(App):
         )
         self.run_worker(self.poller.run())
 
+    def on_unmount(self) -> None:
+        # Without this the poll loop keeps running (and a PTY fetch in flight
+        # keeps a worker thread alive) while the interpreter is trying to shut
+        # down, so quitting stalls until the current round finishes.
+        if self.poller is not None:
+            self.poller.stop()
+
     def _apply(self, snap: UsageSnapshot) -> None:
-        row = self.query_one(f"#row-{snap.provider}", SnapshotRow)
-        row.apply(snap)
+        # Matched by attribute rather than `query_one("#row-...")`: a provider
+        # name comes from the config file, so it may match no row at all (a
+        # typo) or not even be a valid CSS selector. An unmatched snapshot is
+        # simply ignored instead of raising NoMatches into the poll loop.
+        for row in self.query(SnapshotRow):
+            if row.provider == snap.provider:
+                row.apply(snap)
+                break
+        self.sub_title = time.strftime(
+            "last refresh %H:%M:%S", time.localtime(snap.fetched_at or time.time())
+        )
 
     def action_refresh(self) -> None:
+        # Poller._run_round() ignores this if a round is already in flight, so
+        # holding `r` can't stack up concurrent CLI spawns.
         if self.poller is not None:
             self.run_worker(self.poller.run_once())
