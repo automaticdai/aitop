@@ -3,7 +3,7 @@ from pathlib import Path
 
 from ai_pal.models import Quota
 from ai_pal.providers import codex as codex_module
-from ai_pal.providers.codex import CodexProvider
+from ai_pal.providers.codex import _SEQ, _TOTAL_TIMEOUT, CodexProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "codex_usage.txt").read_text()
 
@@ -47,3 +47,43 @@ def test_fetch_never_raises_on_pty_failure(monkeypatch):
     snap = asyncio.run(CodexProvider().fetch())
     assert snap.ok is False
     assert "pty spawn failed" in snap.error
+
+
+def test_fetch_offloads_blocking_call_to_a_thread(monkeypatch):
+    # drive_screen() is a blocking synchronous call; fetch() must not invoke
+    # it inline on the event loop (that would freeze the whole asyncio loop,
+    # including other providers and the Textual UI, for up to total_timeout
+    # on every poll -- asyncio.wait_for's own timeout can only preempt at an
+    # await boundary). Assert it runs on a different thread than fetch().
+    import threading
+
+    caller_threads: list[int] = []
+
+    def fake_drive_screen(*args, **kwargs):
+        caller_threads.append(threading.get_ident())
+        return "fake screen"
+
+    monkeypatch.setattr(codex_module, "drive_screen", fake_drive_screen)
+    fetch_thread = threading.get_ident()
+    snap = asyncio.run(CodexProvider().fetch())
+    assert snap.ok is True
+    assert len(caller_threads) == 1
+    assert caller_threads[0] != fetch_thread
+
+
+def test_seq_leads_with_defensive_dialog_skip():
+    # codex-cli has previously shown an "Update available" dialog on startup
+    # where a bare Enter triggers `npm install -g` and self-updates the
+    # global CLI. fetch() runs unattended on a recurring poll indefinitely,
+    # so the skip keystroke (down-arrow selects Skip, then Enter) must always
+    # be sent first, regardless of whether a dialog was observed locally.
+    assert _SEQ[0] == (2.0, "\x1b[B\r")
+
+
+def test_total_timeout_leaves_margin_under_scheduler_default():
+    # src/ai_pal/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
+    # by default. drive_screen's own SIGKILL cleanup must fire comfortably
+    # before that, since asyncio.to_thread cannot interrupt an
+    # already-running thread on cancellation -- an orphaned PTY child would
+    # otherwise run out its full budget unsupervised.
+    assert _TOTAL_TIMEOUT < 15.0

@@ -22,8 +22,16 @@ def drive_screen(
     """Spawn a TUI in a PTY, feed a timed key sequence, return the rendered screen text."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.environ["TERM"] = "xterm-256color"
-        os.execvp(command[0], command)
+        # Child branch: control must never return past os.execvp. If exec
+        # fails (binary not on PATH, etc.), the raised exception would
+        # otherwise unwind through this forked copy of the whole parent
+        # process's Python state instead of terminating it, leaving a live
+        # duplicate process running. os._exit skips that unwind entirely.
+        try:
+            os.environ["TERM"] = "xterm-256color"
+            os.execvp(command[0], command)
+        except Exception:
+            os._exit(1)
 
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     screen = pyte.Screen(cols, rows)
