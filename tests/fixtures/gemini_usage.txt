@@ -1,0 +1,40 @@
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+└ Models & Quota
+
+  Account: automatic.dai@gmail.com
+
+GEMINI MODELS
+  Models within this group: Gemini Flash, Gemini Pro
+
+  Weekly Limit Remaining
+    [███████████████████████████████████████████████░░░] 94.33%
+    94% remaining · Refreshes in 97h 24m
+
+  Five Hour Limit Remaining
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+
+
+CLAUDE AND GPT MODELS
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS
+
+  Weekly Limit Remaining
+    [████████████████████████████████░░░░░░░░░░░░░░░░░░] 64.80%
+    65% remaining · Refreshes in 97h 25m
+
+  Five Hour Limit Remaining
+    [██████████████████████████████████████████████████] 100.00%
+    Quota available
+
+
+  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  │consumed proportionally to the cost of the tokens. Thus, limits will last
+  │longer with shorter tasks or using more cost-effective models. The 5-hour
+  (1–27 of 30 lines)
+
+  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close
+                                                                                                  Gemini 3.7 Flash · low
