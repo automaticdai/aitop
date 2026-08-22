@@ -10,10 +10,10 @@ def test_build_mock_providers():
     assert all(isinstance(p, MockProvider) for p in providers)
 
 
-def test_build_real_providers_only_enabled():
+def test_build_real_providers_skips_off_providers():
     cfg = Config.defaults()
     for name in ("claude", "codex", "gemini"):
-        cfg.providers[name].enabled = False
+        cfg.providers[name].position = (-1, -1)
     providers = build_providers(cfg, mock=False)
     names = {p.name for p in providers}
     assert names == {"deepseek"}

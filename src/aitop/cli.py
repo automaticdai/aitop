@@ -11,6 +11,13 @@ def build_parser() -> argparse.ArgumentParser:
     # argparse boundary rather than leaving a bare str to blow up downstream.
     parser.add_argument("--config", type=Path, default=None, help="path to config.toml")
     parser.add_argument("--mock", action="store_true", help="use canned data, no live credentials")
+    # Tri-state: absent = follow [web].enabled in config; --web / --no-web force it.
+    parser.add_argument(
+        "--web",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="enable (--web) or disable (--no-web) the web view, overriding config",
+    )
     return parser
 
 
@@ -23,6 +30,8 @@ def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
 
     config = load_config(args.config)
+    if args.web is not None:
+        config.web.enabled = args.web
     AitopApp(config=config, mock=args.mock).run()
 
 

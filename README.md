@@ -2,6 +2,8 @@
 
 `aitop` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude Code, Codex, Antigravity (agy), and DeepSeek — and renders each one as its own bordered block with a daily/weekly usage bar (or an account balance, for DeepSeek), so you can tell at a glance which assistant you're about to rate-limit yourself out of.
 
+![aitop dashboard](docs/screenshot.png)
+
 ## Install
 
 Requires Python 3.11+.
@@ -12,7 +14,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `aitop` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `aitop` instead of `python -m aitop.cli`.
+This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`, `starlette`, `uvicorn`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `aitop` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `aitop` instead of `python -m aitop.cli`.
 
 ## Running it
 
@@ -20,6 +22,8 @@ This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, 
 aitop              # live mode: polls real accounts/CLIs
 aitop --mock       # mock mode: synthetic data, no credentials or CLIs needed
 aitop --config path/to/config.toml   # use a config file at a custom path
+aitop --web        # also serve the same data as a live web page
+aitop --no-web     # force the web view off (even if config enables it)
 ```
 
 `--mock` is the easiest way to try the tool or develop against it: it swaps in a `MockProvider` for every enabled provider, which returns fixed, made-up quota/balance numbers immediately, with no network calls, no API keys, and none of the vendor CLIs installed.
@@ -34,12 +38,23 @@ When a CLI's screen shows a reset time for a quota window, that's captured verba
 
 Antigravity's block shows two named groups rather than one bar, separated by a blank line, because the `agy` CLI reports two separate quota pools sharing the same account: "Gemini" (Gemini Flash/Pro) and "Claude & GPT-OSS" (a combined pool for Claude Opus/Sonnet and GPT-OSS models). Both are read from the same screen and rendered under their own labels.
 
+DeepSeek's block shows only its account balance (it has no quota/limit concept, so there's no bar). If the API reports the balance as insufficient for calls (`is_available: false` — which can happen even with a nonzero balance, e.g. during a payment hold) that's flagged inline in red rather than left for you to notice the hard way.
+
 ### Key bindings
 
 - `q` — quit
 - `r` — refresh all providers immediately (instead of waiting for the next scheduled poll)
 
 Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not implemented in this version — each row shows only the summary bar. The full raw response/screen-scrape text is still captured internally on every snapshot (`UsageSnapshot.raw`), so a detail view can be added later without changing any adapter.
+
+### Web view
+
+`aitop` can also serve the same data as a small, self-refreshing web page. It's off by default; turn it on with `--web` (or `--no-web` to force it off), or set `[web] enabled = true` in the config file. When enabled, a Starlette/uvicorn server starts alongside the TUI and serves:
+
+- `http://127.0.0.1:8787/` — the dashboard page, which polls for fresh data every 2 s.
+- `http://127.0.0.1:8787/api/snapshots` — the same data as raw JSON.
+
+The page shows one card per provider with a real progress bar (same green/amber/red thresholds as the TUI), the balance, reset notes, and Antigravity's two quota groups — and it honors the same stale/error semantics: a failed fetch keeps showing the last good numbers, marked stale. It binds to loopback by default, so nothing is exposed off-box unless you change `[web] host`. **The endpoints have no authentication** — keep `host` on `127.0.0.1` unless you're on a network you trust. The server runs in a background thread and is optional — a bind failure (e.g. the port is taken) is logged and the dashboard keeps running.
 
 ## What each provider needs
 
@@ -75,40 +90,51 @@ If a vendor ever ships a real, individually-authenticatable HTTP usage API, that
 
 ## Configuration
 
-On startup, `aitop` looks for a TOML config file at:
+On startup, `aitop` looks for a TOML config file in this order:
 
-```
-~/.config/aitop/config.toml
-```
+1. `./config.toml` — the project-local file (i.e. the current working directory, when you run `aitop` from there). This overrides everything below.
+2. `~/.config/aitop/config.toml` — the per-user fallback, which also keeps working after a real `pip install` (when "the current directory" is no longer the project folder).
 
-(or at the path given via `--config`). If the file doesn't exist, built-in defaults are used — you don't need to create one to run the app.
+You can also point it at a specific path with `--config`, which bypasses both. If neither of the two default locations exists, `aitop` writes a default config to `~/.config/aitop/config.toml` on first run — so you always have a concrete file to edit — then reads it back. You don't need to create one yourself.
 
 Example config showing everything that's currently configurable:
 
 ```toml
 refresh_interval_s = 30
 
+[layout]
+rows = 2
+columns = 2
+
 [providers.claude]
-enabled = true
-timeout_s = 15
+position = [1, 1]
 
 [providers.codex]
-enabled = true
-timeout_s = 15
+position = [1, 2]
 
 [providers.gemini]
-enabled = true
-timeout_s = 15
+position = [2, 1]
 
 [providers.deepseek]
-enabled = true
-timeout_s = 15
+position = [-1, -1]   # off
+
+[web]
+enabled = false
+host = "127.0.0.1"
+port = 8787
 ```
 
-- `refresh_interval_s` — how often (in seconds) the app polls all enabled providers again after a full round finishes. Defaults to `30`.
+- `refresh_interval_s` — how often (in seconds) the app polls all on providers again after a full round finishes. Defaults to `30`.
+- `[layout]` — the dashboard's grid. `rows` × `columns`. Defaults to a single column of 4 rows (the original vertical stack), so omitting this section changes nothing.
+  - `rows` — number of rows. Defaults to `4`.
+  - `columns` — number of columns. Defaults to `1`.
 - `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`). Any provider omitted from the file keeps its defaults.
-  - `enabled` — set to `false` to skip a provider entirely (it won't be polled or fetched at all; its row stays in the layout showing the initial "loading…" placeholder, since nothing ever updates it). Defaults to `true`.
+  - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
   - `timeout_s` — accepted and parsed, but **not yet wired up** in this version: every provider is currently fetched under the scheduler's single global 15 s timeout, so changing this value has no effect. It's kept in the config schema because plumbing it through to a real per-provider timeout is a small, non-breaking change. Defaults to `15`.
+- `[web]` — the optional web view (off by default). When enabled, `aitop` also serves a live web page and JSON endpoint.
+  - `enabled` — whether to start the web server. Defaults to `false`. `--web` / `--no-web` on the command line override this.
+  - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only).
+  - `port` — port to bind. Defaults to `8787`.
 
 You only need to specify the keys you want to override; anything left out falls back to the default shown above.
 

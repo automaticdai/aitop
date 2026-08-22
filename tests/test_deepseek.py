@@ -13,7 +13,13 @@ FIXTURE = json.loads(
 
 def test_parse_balance_picks_nonzero_currency():
     b = DeepSeekProvider._parse_balance(FIXTURE)
-    assert b == Balance(225.05, "CNY")
+    assert b == Balance(225.05, "CNY", available=True)
+
+
+def test_parse_balance_reports_unavailable():
+    data = {**FIXTURE, "is_available": False}
+    b = DeepSeekProvider._parse_balance(data)
+    assert b.available is False
 
 
 def test_parse_balance_empty():
@@ -37,7 +43,7 @@ def test_fetch_ok(monkeypatch):
     provider = DeepSeekProvider(transport=httpx.MockTransport(handler))
     snap = __import__("asyncio").run(provider.fetch())
     assert snap.ok is True
-    assert snap.balance == Balance(225.05, "CNY")
+    assert snap.balance == Balance(225.05, "CNY", available=True)
 
 
 def test_fetch_malformed_balance_returns_error_not_raise(monkeypatch):

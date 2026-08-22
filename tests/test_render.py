@@ -1,6 +1,7 @@
 from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
 from aitop.render import (
     DISPLAY_NAME,
+    LOGOS,
     bar_color,
     fmt_pct,
     has_data,
@@ -42,12 +43,35 @@ def test_display_name_maps_internal_keys_to_shown_text():
     }
 
 
+def test_logos_cover_every_known_provider():
+    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek"}
+
+
+def test_render_snapshot_prepends_the_provider_logo():
+    snap = UsageSnapshot("claude", daily=Quota(12, 50, "messages"))
+    out = render_snapshot(snap)
+    assert out.startswith(LOGOS["claude"] + "\n\n")
+
+
+def test_render_snapshot_unknown_provider_has_no_logo():
+    snap = UsageSnapshot("test-provider", daily=Quota(12, 50, "messages"))
+    out = render_snapshot(snap)
+    assert out.startswith("[green]●[/green]")
+
+
+def test_render_stale_prepends_the_provider_logo():
+    last_good = UsageSnapshot("codex", daily=Quota(12, 50, "messages"))
+    out = render_stale(last_good, "pty timed out")
+    assert out.startswith(LOGOS["codex"] + "\n\n")
+
+
 def test_render_snapshot_quota():
     # The provider's identity is carried by the panel's border title
     # (app.py), not repeated in the body -- render_snapshot only needs to
-    # produce the status + data lines.
+    # produce the status + data lines. Provider name is a generic
+    # placeholder with no LOGOS entry, since the logo isn't under test here.
     snap = UsageSnapshot(
-        "codex",
+        "test-provider",
         daily=Quota(12, 50, "messages"),
         weekly=Quota(30, 200, "messages"),
     )
@@ -60,7 +84,7 @@ def test_render_snapshot_quota():
 
 def test_render_snapshot_colors_bars_by_severity():
     snap = UsageSnapshot(
-        "codex",
+        "test-provider",
         daily=Quota(10, 100, "messages"),  # 10% used -> green
         weekly=Quota(95, 100, "messages"),  # 95% used -> red
     )
@@ -75,8 +99,21 @@ def test_render_snapshot_balance():
     assert "225.05" in out and "CNY" in out
 
 
+def test_render_snapshot_balance_flags_when_unavailable():
+    snap = UsageSnapshot("deepseek", balance=Balance(225.05, "CNY", available=False))
+    out = render_snapshot(snap)
+    assert "225.05" in out
+    assert "insufficient for API calls" in out
+
+
+def test_render_snapshot_balance_available_shows_no_warning():
+    snap = UsageSnapshot("deepseek", balance=Balance(225.05, "CNY", available=True))
+    out = render_snapshot(snap)
+    assert "insufficient" not in out
+
+
 def test_render_snapshot_error():
-    snap = UsageSnapshot("claude", ok=False, error="token expired")
+    snap = UsageSnapshot("test-provider", ok=False, error="token expired")
     out = render_snapshot(snap)
     assert "token expired" in out
     assert out.startswith("[red]●[/red]")
@@ -95,12 +132,14 @@ def test_render_snapshot_ok_but_empty_says_no_data():
     # regexes match nothing (expired session, vendor UI change, truncated
     # capture) -- deliberately, rather than fabricating numbers. Rendering
     # must not reduce that to a blank body with no diagnostic.
-    out = render_snapshot(UsageSnapshot("gemini"))
+    out = render_snapshot(UsageSnapshot("test-provider"))
     assert out == "[yellow]●[/yellow] no data (check the CLI's login state)"
 
 
 def test_render_snapshot_quota_line_shows_reset_note():
-    snap = UsageSnapshot("codex", weekly=Quota(0, 100, "%", reset_note="resets 14:11 on 27 Aug"))
+    snap = UsageSnapshot(
+        "test-provider", weekly=Quota(0, 100, "%", reset_note="resets 14:11 on 27 Aug")
+    )
     lines = render_snapshot(snap).splitlines()
     assert lines[1].startswith("weekly  ")
     assert lines[2].strip() == "resets 14:11 on 27 Aug"
@@ -147,7 +186,7 @@ def test_render_snapshot_groups():
 
 def test_render_snapshot_groups_have_a_blank_line_between_them():
     snap = UsageSnapshot(
-        "gemini",
+        "test-provider",
         groups=[
             QuotaGroup(label="Gemini", weekly=Quota(6, 100, "%")),
             QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%")),

@@ -22,6 +22,58 @@ DISPLAY_NAME = {
     "deepseek": "DeepSeek",
 }
 
+# A minimal 4-col x 5-row block-letter font, used to spell out the company
+# behind each provider as ASCII text art rather than a pictorial mark. Each
+# glyph is a fixed-width cell so words made of these tile together with no
+# per-word alignment work -- only the letters _text_art() below is actually
+# called with need to exist here.
+_FONT: dict[str, tuple[str, str, str, str, str]] = {
+    "A": (" ## ", "#  #", "####", "#  #", "#  #"),
+    "C": (" ###", "#   ", "#   ", "#   ", " ###"),
+    "D": ("### ", "#  #", "#  #", "#  #", "### "),
+    "E": ("####", "#   ", "### ", "#   ", "####"),
+    "G": (" ###", "#   ", "# ##", "#  #", " ###"),
+    "H": ("#  #", "#  #", "####", "#  #", "#  #"),
+    "I": (" ## ", "  # ", "  # ", "  # ", " ## "),
+    "K": ("#  #", "# # ", "##  ", "# # ", "#  #"),
+    "L": ("#   ", "#   ", "#   ", "#   ", "####"),
+    "N": ("#  #", "## #", "# ##", "#  #", "#  #"),
+    "O": (" ## ", "#  #", "#  #", "#  #", " ## "),
+    "P": ("### ", "#  #", "### ", "#   ", "#   "),
+    "R": ("### ", "#  #", "### ", "# # ", "#  #"),
+    "S": (" ###", "#   ", " ## ", "   #", "### "),
+    "T": ("####", " #  ", " #  ", " #  ", " #  "),
+}
+
+
+def _text_art(word: str, colors: list[str] | None = None) -> str:
+    """Render `word` as 5-row block-letter ASCII text art.
+
+    `colors`, if given, supplies one hex color per letter, wrapped around
+    just that letter's own columns -- used for Google, whose wordmark is
+    genuinely multicolored letter-by-letter, unlike the other three.
+    """
+    glyphs = [_FONT[ch] for ch in word]
+    rows = []
+    for r in range(5):
+        cells = [g[r] for g in glyphs]
+        if colors:
+            cells = [f"[{c}]{cell}[/]" for c, cell in zip(colors, cells)]
+        rows.append(" ".join(cells))
+    return "\n".join(rows)
+
+
+LOGOS = {
+    "claude": f"[#D97757]{_text_art('ANTHROPIC')}[/]",  # Anthropic clay
+    "codex": f"[#10A37F]{_text_art('OPENAI')}[/]",  # OpenAI teal
+    # Google's own wordmark colors, letter by letter: G-blue o-red o-yellow
+    # g-blue l-green e-red.
+    "gemini": _text_art(
+        "GOOGLE", colors=["#4285F4", "#EA4335", "#FBBC05", "#4285F4", "#34A853", "#EA4335"]
+    ),
+    "deepseek": f"[#4D6BFE]{_text_art('DEEPSEEK')}[/]",  # DeepSeek blue
+}
+
 
 def fmt_pct(pct: float | None) -> str:
     return "—" if pct is None else f"{pct:.1f}%"
@@ -90,9 +142,10 @@ def _value_lines(snap: UsageSnapshot) -> list[str]:
     if snap.weekly is not None:
         lines.extend(_quota_line("weekly", snap.weekly))
     if snap.balance is not None:
-        lines.append(
-            f"balance  {snap.balance.amount:.2f} {escape(snap.balance.currency)}"
-        )
+        b = snap.balance
+        lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")
+        if not b.available:
+            lines.append("         [red]insufficient for API calls[/red]")
     for i, group in enumerate(snap.groups or []):
         if i > 0:
             lines.append("")
@@ -100,9 +153,14 @@ def _value_lines(snap: UsageSnapshot) -> list[str]:
     return lines
 
 
+def _with_logo(provider: str, body: str) -> str:
+    logo = LOGOS.get(provider)
+    return f"{logo}\n\n{body}" if logo else body
+
+
 def render_snapshot(snap: UsageSnapshot) -> str:
     if not snap.ok:
-        return f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}"
+        return _with_logo(snap.provider, f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}")
     lines = _value_lines(snap)
     if not lines:
         # ok=True with nothing parsed is the most likely real-world PTY
@@ -110,11 +168,11 @@ def render_snapshot(snap: UsageSnapshot) -> str:
         # by the timeout). The adapters deliberately return None rather than
         # fabricate a number and deliberately leave ok=True, so the diagnostic
         # has to be added here, at the rendering layer.
-        return f"{_dot('yellow')} no data (check the CLI's login state)"
-    return "\n".join([_dot('green'), *lines])
+        return _with_logo(snap.provider, f"{_dot('yellow')} no data (check the CLI's login state)")
+    return _with_logo(snap.provider, "\n".join([_dot('green'), *lines]))
 
 
 def render_stale(last_good: UsageSnapshot, error: str | None) -> str:
     """Spec §7: a failed fetch keeps showing the last good value, marked stale."""
     header = f"{_dot('red')} [dim](stale — {escape(error or 'fetch failed')})[/dim]"
-    return "\n".join([header, *_value_lines(last_good)])
+    return _with_logo(last_good.provider, "\n".join([header, *_value_lines(last_good)]))

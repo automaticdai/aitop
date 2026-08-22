@@ -1,16 +1,21 @@
 import asyncio
+import socket
+
+from textual.containers import Grid
 
 from aitop.app import AitopApp, SnapshotRow
 from aitop.config import Config, ProviderConfig
 from aitop.models import Quota, UsageSnapshot
-from aitop.render import DISPLAY_NAME
+from aitop.render import DISPLAY_NAME, LOGOS
 
 
-def _run(coro_factory):
-    async def scenario():
-        # A config with no providers keeps the poller from spawning anything
-        # while the test drives the UI by hand.
+def _run(coro_factory, cfg=None):
+    # A config with no providers keeps the poller from spawning anything
+    # while the test drives the UI by hand.
+    if cfg is None:
         cfg = Config(refresh_interval_s=3600.0, providers={})
+
+    async def scenario():
         app = AitopApp(config=cfg, mock=True)
         async with app.run_test() as pilot:
             await coro_factory(app, pilot)
@@ -41,7 +46,14 @@ def test_snapshot_with_a_selector_hostile_provider_name_does_not_crash():
     _run(scenario)
 
 
+def test_snapshot_row_shows_its_provider_logo_before_the_first_snapshot():
+    row = SnapshotRow("claude")
+    assert str(row.content).startswith(LOGOS["claude"] + "\n\nloading")
+
+
 def test_known_provider_row_is_updated_and_header_timestamp_set():
+    cfg = Config(refresh_interval_s=3600.0, providers={"codex": ProviderConfig()})
+
     async def scenario(app, pilot):
         app._apply(UsageSnapshot("codex", daily=Quota(12, 50, "messages")))
         await pilot.pause()
@@ -49,23 +61,48 @@ def test_known_provider_row_is_updated_and_header_timestamp_set():
         assert "12/50" in str(row.content)
         assert app.sub_title.startswith("last refresh ")
 
-    _run(scenario)
+    _run(scenario, cfg)
 
 
-def test_failed_snapshot_keeps_the_last_good_values_and_marks_the_row_stale():
+def test_row_keeps_last_good_values_and_marks_stale_on_failure():
     # Spec §7: on failure the row is marked stale and keeps showing the last
-    # good value instead of being blanked out by an ERROR line.
-    async def scenario(app, pilot):
-        app._apply(UsageSnapshot("claude", daily=Quota(25, 100, "%")))
-        await pilot.pause()
-        app._apply(UsageSnapshot("claude", ok=False, error="pty timed out"))
-        await pilot.pause()
-        text = str(app.query_one("#row-claude", SnapshotRow).content)
-        assert "25.0%" in text
-        assert "stale" in text
-        assert "pty timed out" in text
+    # good value instead of being blanked out by an ERROR line. Tested at the
+    # row level to keep it deterministic (the app-level _apply routing is
+    # covered above; a live mock poll would race this assertion).
+    row = SnapshotRow("claude")
+    row.apply(UsageSnapshot("claude", daily=Quota(25, 100, "%")))
+    row.apply(UsageSnapshot("claude", ok=False, error="pty timed out"))
+    text = str(row.content)
+    assert "25.0%" in text
+    assert "stale" in text
+    assert "pty timed out" in text
 
-    _run(scenario)
+
+def test_grid_composes_rows_in_row_major_order_and_omits_off_providers():
+    async def scenario():
+        cfg = Config(
+            refresh_interval_s=3600.0,
+            providers={n: ProviderConfig() for n in ("claude", "codex", "gemini", "deepseek")},
+        )
+        cfg.layout.rows = 2
+        cfg.layout.columns = 3
+        cfg.providers["claude"].position = (1, 1)
+        cfg.providers["codex"].position = (1, 3)
+        cfg.providers["gemini"].position = (2, 2)
+        cfg.providers["deepseek"].position = (-1, -1)  # off
+
+        app = AitopApp(config=cfg, mock=True)
+        async with app.run_test() as pilot:
+            grid = app.query_one(Grid)
+            rows = [w for w in grid.children if isinstance(w, SnapshotRow)]
+            # row-major order: claude (1,1), codex (1,3), gemini (2,2)
+            assert [r.provider for r in rows] == ["claude", "codex", "gemini"]
+            # the off provider has no row
+            assert app.query("#row-deepseek").__len__() == 0
+            # 2x3 grid: 3 provider rows + 3 blank placeholders
+            assert len(grid.children) == 6
+
+    asyncio.run(scenario())
 
 
 def test_quitting_stops_the_poller():
@@ -134,5 +171,52 @@ def test_mock_mode_with_an_unrecognized_provider_name_does_not_crash_the_app():
             assert "12/50" in str(row.content)
             # ...and the unknown one simply has no row to update
             assert app.query("#row-nonsense").__len__() == 0
+
+    asyncio.run(scenario())
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def test_web_disabled_by_default_creates_no_store():
+    async def scenario(app, pilot):
+        assert app.web_store is None
+        assert app.web_server is None
+
+    _run(scenario)
+
+
+def test_web_enabled_feeds_snapshots_to_the_store():
+    cfg = Config(refresh_interval_s=3600.0, providers={})
+    cfg.web.enabled = True
+    cfg.web.port = _free_port()
+
+    async def scenario(app, pilot):
+        assert app.web_store is not None
+        app._apply(UsageSnapshot("claude", daily=Quota(25, 100, "%")))
+        entries = app.web_store.entries()
+        assert entries[0]["provider"] == "claude"
+        assert entries[0]["daily"]["pct"] == 25.0
+
+    _run(scenario, cfg)
+
+
+def test_web_enabled_unmount_stops_server():
+    async def scenario():
+        cfg = Config(refresh_interval_s=3600.0, providers={})
+        cfg.web.enabled = True
+        cfg.web.port = _free_port()
+        app = AitopApp(config=cfg, mock=True)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.web_server is not None
+            server = app.web_server
+        assert server._server.should_exit is True
+        assert not server._thread.is_alive()
 
     asyncio.run(scenario())

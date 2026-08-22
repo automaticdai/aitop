@@ -1,7 +1,8 @@
 import os
+import threading
 import time
 
-from aitop.providers.pty_driver import drive_screen
+from aitop.providers.pty_driver import drive_screen, drive_screen_steps, request_stop
 
 
 def test_exec_failure_terminates_child_immediately_not_via_timeout():
@@ -94,3 +95,41 @@ def test_broken_done_when_predicate_does_not_break_the_capture():
         done_when=boom,
     )
     assert "READY" in out
+
+
+def test_drive_screen_steps_returns_one_screen_per_keystroke():
+    # Used by the Codex adapter to read two successive screens (/status then
+    # /usage) from a single PTY session instead of spawning a fresh CLI per
+    # screen. The core contract is: one (keys, screen) pair per keystroke, in
+    # order, and the keys are preserved verbatim so the caller can find a
+    # specific step.
+    steps = drive_screen_steps(
+        ["bash", "-c", "sleep 5"],
+        [(0.1, "a"), (0.2, "b"), (0.3, "c")],
+        total_timeout=1.0,
+        settle_s=0.1,
+    )
+    assert [keys for keys, _ in steps] == ["a", "b", "c"]
+    assert all(isinstance(screen, str) for _, screen in steps)
+
+
+def test_request_stop_aborts_an_in_flight_capture():
+    # drive_screen runs in an asyncio.to_thread worker thread that can't be
+    # cancelled; the only way to cut one short on quit is the stop latch. This
+    # is the "quit leaves threads/CLIs running" bug: without the latch the
+    # capture (and its child CLI) runs out the whole 10s budget while the
+    # interpreter waits for the executor to drain.
+    result: dict[str, float] = {}
+
+    def run() -> None:
+        result["start"] = time.monotonic()
+        drive_screen(["bash", "-c", "sleep 30"], [], total_timeout=10.0)
+        result["end"] = time.monotonic()
+
+    t = threading.Thread(target=run)
+    t.start()
+    time.sleep(1.0)  # let the capture start and its loop enter select()
+    request_stop()
+    t.join(timeout=3.0)
+    assert not t.is_alive(), "capture did not abort after request_stop()"
+    assert result["end"] - result["start"] < 5.0

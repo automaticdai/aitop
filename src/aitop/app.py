@@ -3,16 +3,15 @@ from __future__ import annotations
 import time
 
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Grid
 from textual.widgets import Footer, Header, Static
 
-from .config import Config
+from .config import Config, layout_cells
 from .models import UsageSnapshot
 from .providers import build_providers
-from .render import DISPLAY_NAME, has_data, render_snapshot, render_stale
+from .render import DISPLAY_NAME, LOGOS, has_data, render_snapshot, render_stale
 from .scheduler import Poller
-
-_PROVIDER_ORDER = ("claude", "codex", "gemini", "deepseek")
+from .web import SnapshotStore, WebServer
 
 
 class SnapshotRow(Static):
@@ -29,7 +28,9 @@ class SnapshotRow(Static):
     """
 
     def __init__(self, provider: str) -> None:
-        super().__init__("loading…", id=f"row-{provider}")
+        logo = LOGOS.get(provider)
+        initial = f"{logo}\n\nloading…" if logo else "loading…"
+        super().__init__(initial, id=f"row-{provider}")
         self.provider = provider
         self.border_title = DISPLAY_NAME.get(provider, provider)
         self._last_good: UsageSnapshot | None = None
@@ -60,11 +61,45 @@ class AitopApp(App):
         self.config = config
         self.mock = mock
         self.poller: Poller | None = None
+        # The web view is a second consumer of the poller's snapshots, gated by
+        # config: when disabled (the default) nothing is created, so the TUI
+        # carries no server thread or shared state it never uses.
+        self.web_store: SnapshotStore | None = None
+        self.web_server: WebServer | None = None
+        if config.web.enabled:
+            self.web_store = SnapshotStore()
+            self.web_server = WebServer(
+                self.web_store, host=config.web.host, port=config.web.port
+            )
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Vertical(*(SnapshotRow(p) for p in _PROVIDER_ORDER))
+        yield self._build_grid()
         yield Footer()
+
+    def _build_grid(self) -> Grid:
+        # A provider's position comes from config.layout + each provider's
+        # `position` (row, col); off providers (position (-1, -1), out of
+        # bounds, or not placed by auto-fill) are omitted entirely. Empty
+        # cells become blank Static placeholders so the grid keeps its shape.
+        cells = layout_cells(self.config)
+        rows, columns = self.config.layout.rows, self.config.layout.columns
+        grid = Grid(*(SnapshotRow(name) if name else Static("") for name in cells))
+        grid.styles.grid_size_columns = columns
+        grid.styles.grid_size_rows = rows
+        # Side-by-side panels (columns > 1) otherwise sit border-to-border --
+        # SnapshotRow's own margin only separates stacked rows (margin-bottom),
+        # so a gutter is needed here to match that vertical spacing. Textual
+        # names these by the gutter line's own orientation, not the axis it
+        # spaces apart: "vertical" is the vertical *line* of space between
+        # side-by-side columns, i.e. the horizontal gap we actually want.
+        grid.styles.grid_gutter_vertical = 2
+        # Rows size to content rather than stretching equal (1fr): Codex and
+        # DeepSeek have a couple of lines where Claude/Gemini have many, so an
+        # equal split leaves the thin panels mostly empty. auto hugs each panel
+        # to its own height instead.
+        grid.styles.grid_rows = "auto"
+        return grid
 
     def on_mount(self) -> None:
         providers = build_providers(self.config, mock=self.mock)
@@ -74,6 +109,8 @@ class AitopApp(App):
             on_result=self._apply,
         )
         self.run_worker(self.poller.run())
+        if self.web_server is not None:
+            self.web_server.start()
 
     def on_unmount(self) -> None:
         # Without this the poll loop keeps running (and a PTY fetch in flight
@@ -81,6 +118,8 @@ class AitopApp(App):
         # down, so quitting stalls until the current round finishes.
         if self.poller is not None:
             self.poller.stop()
+        if self.web_server is not None:
+            self.web_server.stop()
 
     def _apply(self, snap: UsageSnapshot) -> None:
         # Matched by attribute rather than `query_one("#row-...")`: a provider
@@ -94,6 +133,8 @@ class AitopApp(App):
         self.sub_title = time.strftime(
             "last refresh %H:%M:%S", time.localtime(snap.fetched_at or time.time())
         )
+        if self.web_store is not None:
+            self.web_store.update(snap)
 
     def action_refresh(self) -> None:
         # Poller._run_round() ignores this if a round is already in flight, so

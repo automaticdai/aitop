@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 
 from .models import Provider, UsageSnapshot
+from .providers.pty_driver import request_stop
 
 log = logging.getLogger(__name__)
 
@@ -83,3 +84,8 @@ class Poller:
 
     def stop(self) -> None:
         self._stop.set()
+        # In-flight drive_screen() calls run in asyncio.to_thread worker
+        # threads that can't be cancelled; asking them to abort makes each one
+        # break its loop, SIGKILL its child CLI, and return, so quit doesn't
+        # hang for the full capture budget (and leaves no CLI processes alive).
+        request_stop()

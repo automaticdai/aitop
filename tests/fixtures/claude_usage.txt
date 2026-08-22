@@ -1,12 +1,12 @@
 ╭─── Claude Code v2.1.237 ─────────────────────────────────────────────────────────────────────────────────────────────╮
 │                                                    │ Tips for getting started                                        │
-│                Welcome back Steven!                │ Run /init to create a CLAUDE.md file with instructions for Cla… │
+│                Welcome back User!                │ Run /init to create a CLAUDE.md file with instructions for Cla… │
 │                                                    │ ─────────────────────────────────────────────────────────────── │
 │                       ▐▛███▛█                      │ What's new                                                      │
 │                      ▝▜██████▀                     │ Fixed prompt caching for sessions using an LLM gateway or cust… │
 │                        ▝▝ ▝▝                       │ Added a built-in "Concise" output style: Claude leads with res… │
 │     Sonnet 5 with xhigh effort · Claude Pro ·      │ Added `ANTHROPIC_DEFAULT_MODEL` environment variable: sets the… │
-│     automatic.dai@gmail.com's Organization         │ /release-notes for more                                         │
+│     user@example.com's Organization         │ /release-notes for more                                         │
 │ /…/46ddd14e-7f2b-47f2-a764-57e5cc6d8b45/scratchpad │                                                                 │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 

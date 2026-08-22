@@ -44,3 +44,4 @@ def test_balance_fields():
     b = Balance(225.05, "CNY")
     assert b.amount == 225.05
     assert b.currency == "CNY"
+    assert b.available is True

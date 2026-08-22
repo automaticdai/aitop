@@ -16,7 +16,7 @@ from .pty_driver import drive_screen
 # ambient environment -- confirmed via `env -u ANTHROPIC_BASE_URL -u
 # ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_MODEL claude` that this lands on the real,
 # already-authenticated Anthropic account (org line on the welcome screen:
-# "automatic.dai@gmail.com's Organization", Claude Pro), not an alternate
+# "user@example.com's Organization", Claude Pro), not an alternate
 # backend. `drive_screen()` has no `env=` parameter of its own (and isn't
 # modified here) -- prefixing the command with `env -u ...` achieves the same
 # effect without touching the shared driver.

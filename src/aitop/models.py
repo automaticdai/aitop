@@ -22,6 +22,11 @@ class Quota:
 class Balance:
     amount: float
     currency: str
+    # DeepSeek's /user/balance reports this directly rather than leaving it
+    # to be inferred from amount > 0 -- it can be False on a nonzero balance
+    # (e.g. a payment/verification hold), so it's a real signal in its own
+    # right and not just a restatement of the amount.
+    available: bool = True
 
 
 @dataclass

@@ -19,7 +19,7 @@
 │  Directory:            ~/ai-pal/.claude/worktrees/feat+ai-pal-v1                 │
 │  Permissions:          Workspace (Ask for approval)                              │
 │  Agents.md:            <none>                                                    │
-│  Account:              automatic.dai@gmail.com (Plus)                            │
+│  Account:              user@example.com (Plus)                            │
 │  Collaboration mode:   Default                                                   │
 │  Session:              01a01f89-9172-72f3-ac10-d397ce951e1c                      │
 │                                                                                  │

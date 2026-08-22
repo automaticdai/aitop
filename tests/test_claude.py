@@ -13,7 +13,7 @@ def test_parse_real_usage_screen():
     # (Claude Code v2.1.237), spawned with ANTHROPIC_BASE_URL/AUTH_TOKEN/MODEL
     # stripped so it targets the real, already-authenticated Anthropic
     # account rather than an alternate backend (confirmed by the welcome
-    # screen's "automatic.dai@gmail.com's Organization" / "Claude Pro" line).
+    # screen's "user@example.com's Organization" / "Claude Pro" line).
     # This account shows "Current session" at 25% used and "Current week
     # (all models)" at 20% used -- already reported as percent *used*, no
     # inversion needed (unlike Codex's/Gemini's percent-remaining screens).

@@ -27,8 +27,55 @@ def test_config_flag_is_parsed_as_a_path():
 def test_parsed_config_flag_flows_into_load_config(tmp_path):
     # End-to-end over the exact hand-off that was broken: argparse -> load_config.
     p = tmp_path / "config.toml"
-    p.write_text("refresh_interval_s = 12\n[providers.codex]\nenabled = false\n")
+    p.write_text("refresh_interval_s = 12\n[providers.codex]\nposition = [-1, -1]\n")
     args = build_parser().parse_args(["--config", str(p)])
     cfg = load_config(args.config)
     assert cfg.refresh_interval_s == 12.0
-    assert cfg.providers["codex"].enabled is False
+    assert cfg.providers["codex"].position == (-1, -1)
+
+
+def test_web_flag_defaults_to_none():
+    # Tri-state: neither flag leaves config.web.enabled untouched.
+    assert build_parser().parse_args([]).web is None
+
+
+def test_web_flag_enables():
+    assert build_parser().parse_args(["--web"]).web is True
+
+
+def test_no_web_flag_disables():
+    assert build_parser().parse_args(["--no-web"]).web is False
+
+
+def _run_main(monkeypatch, tmp_path, extra_args, toml):
+    from aitop import app as app_module
+
+    seen = {}
+
+    class FakeApp:
+        def __init__(self, config=None, mock=False):
+            seen["config"] = config
+            seen["mock"] = mock
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(app_module, "AitopApp", FakeApp)
+    p = tmp_path / "config.toml"
+    p.write_text(toml)
+
+    from aitop.cli import main
+
+    main(["--config", str(p), *extra_args])
+    return seen
+
+
+def test_main_web_flag_forces_enabled(monkeypatch, tmp_path):
+    seen = _run_main(monkeypatch, tmp_path, ["--web"], "[web]\nenabled = false\n")
+    assert seen["config"].web.enabled is True
+    assert seen["mock"] is False
+
+
+def test_main_no_web_flag_forces_disabled(monkeypatch, tmp_path):
+    seen = _run_main(monkeypatch, tmp_path, ["--no-web"], "[web]\nenabled = true\n")
+    assert seen["config"].web.enabled is False

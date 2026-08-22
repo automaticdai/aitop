@@ -43,4 +43,13 @@ class DeepSeekProvider:
         )
         if chosen is None:
             return None
-        return Balance(amount=float(chosen["total_balance"]), currency=chosen["currency"])
+        # `is_available` is the API's own "can this account actually call the
+        # API right now" bit -- it's not simply amount > 0 (e.g. it can be
+        # False on a nonzero balance during a payment/verification hold), so
+        # it's worth surfacing even though the account never exercised that
+        # case in testing.
+        return Balance(
+            amount=float(chosen["total_balance"]),
+            currency=chosen["currency"],
+            available=bool(data.get("is_available", True)),
+        )
