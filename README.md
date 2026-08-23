@@ -44,6 +44,7 @@ DeepSeek's block shows only its account balance (it has no quota/limit concept, 
 
 - `q` — quit
 - `r` — refresh all providers immediately (instead of waiting for the next scheduled poll)
+- `w` — show the web view's status (running/disabled, host, port, URL)
 
 Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not implemented in this version — each row shows only the summary bar. The full raw response/screen-scrape text is still captured internally on every snapshot (`UsageSnapshot.raw`), so a detail view can be added later without changing any adapter.
 
@@ -54,7 +55,9 @@ Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not
 - `http://127.0.0.1:8787/` — the dashboard page, which polls for fresh data every 2 s.
 - `http://127.0.0.1:8787/api/snapshots` — the same data as raw JSON.
 
-The page shows one card per provider with a real progress bar (same green/amber/red thresholds as the TUI), the balance, reset notes, and Antigravity's two quota groups — and it honors the same stale/error semantics: a failed fetch keeps showing the last good numbers, marked stale. It binds to loopback by default, so nothing is exposed off-box unless you change `[web] host`. **The endpoints have no authentication** — keep `host` on `127.0.0.1` unless you're on a network you trust. The server runs in a background thread and is optional — a bind failure (e.g. the port is taken) is logged and the dashboard keeps running.
+The page shows one card per provider with a real progress bar (same green/amber/red thresholds as the TUI), the balance, reset notes, and Antigravity's two quota groups — and it honors the same stale/error semantics: a failed fetch keeps showing the last good numbers, marked stale. It binds to loopback by default, so nothing is exposed off-box unless you change `[web] host`. Under WSL2 the default is widened to `0.0.0.0` automatically, so your Windows browser can open `localhost` (WSL2 is NAT-isolated, so this still doesn't expose the page to the LAN). **The endpoints have no authentication** — keep `host` on `127.0.0.1` (or the WSL2 default) unless you're on a network you trust. Press `w` in the TUI to see the web view's status. The server runs in a background thread and is optional — a bind failure (e.g. the port is taken) is logged and the dashboard keeps running.
+
+![aitop web view](docs/screenshot_web.png)
 
 ## What each provider needs
 
@@ -130,10 +133,10 @@ port = 8787
   - `columns` — number of columns. Defaults to `1`.
 - `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`). Any provider omitted from the file keeps its defaults.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
-  - `timeout_s` — accepted and parsed, but **not yet wired up** in this version: every provider is currently fetched under the scheduler's single global 15 s timeout, so changing this value has no effect. It's kept in the config schema because plumbing it through to a real per-provider timeout is a small, non-breaking change. Defaults to `15`.
+  - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. (The PTY adapters still cap their own internal screen-capture at ~11 s regardless, so a lower value doesn't shorten that subprocess work — see "The PTY-scrape caveat".)
 - `[web]` — the optional web view (off by default). When enabled, `aitop` also serves a live web page and JSON endpoint.
   - `enabled` — whether to start the web server. Defaults to `false`. `--web` / `--no-web` on the command line override this.
-  - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only).
+  - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only), widened automatically to `"0.0.0.0"` under WSL2 so a Windows browser can reach `localhost`.
   - `port` — port to bind. Defaults to `8787`.
 
 You only need to specify the keys you want to override; anything left out falls back to the default shown above.

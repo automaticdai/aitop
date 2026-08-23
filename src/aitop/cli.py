@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+from . import __version__
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aitop")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     # type=Path (not str): load_config() works with Path objects
     # (`path.exists()`, `path.read_text()`), so the conversion belongs at the
     # argparse boundary rather than leaving a bare str to blow up downstream.
@@ -25,11 +29,17 @@ def main(argv=None) -> None:
     # Imported here rather than at module scope so build_parser() (and its
     # tests) don't have to drag in Textual and every provider adapter.
     from .app import AitopApp
-    from .config import load_config
+    from .config import ConfigError, load_config
 
     args = build_parser().parse_args(argv)
 
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except (ConfigError, OSError) as exc:
+        # A present-but-broken config must fail loudly with a pointer, not a
+        # traceback -- silently falling back would hide a real typo.
+        print(f"aitop: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     if args.web is not None:
         config.web.enabled = args.web
     AitopApp(config=config, mock=args.mock).run()

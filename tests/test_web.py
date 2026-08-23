@@ -1,11 +1,21 @@
+import platform
 import socket
 import time
 
 import httpx
 from starlette.testclient import TestClient
 
+from aitop import web as web_module
 from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
-from aitop.web import SnapshotStore, WebServer, build_app, snapshot_to_dict
+from aitop.web import (
+    INDEX_HTML,
+    SnapshotStore,
+    WebServer,
+    build_app,
+    is_wsl,
+    resolve_host,
+    snapshot_to_dict,
+)
 
 
 def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
@@ -14,6 +24,7 @@ def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
     assert d["provider"] == "claude"
     assert d["display_name"] == "Claude Code"
     assert d["ok"] is True
+    assert d["has_data"] is True
     assert d["stale"] is None
     assert d["daily"] == {
         "used": 25,
@@ -21,6 +32,8 @@ def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
         "unit": "%",
         "reset_note": None,
         "pct": 25.0,
+        "bar_pct": 25.0,
+        "value": "25.0%",
         "color": "green",
     }
 
@@ -140,3 +153,47 @@ def test_webserver_starts_serves_and_stops():
         assert resp.json()[0]["provider"] == "claude"
     finally:
         server.stop()
+
+
+def test_is_wsl_detects_wsl2_kernel(monkeypatch):
+    monkeypatch.setattr(platform, "release", lambda: "6.6.87.2-microsoft-standard-WSL2")
+    assert is_wsl() is True
+
+
+def test_is_wsl_false_on_plain_linux(monkeypatch):
+    monkeypatch.setattr(platform, "release", lambda: "6.6.87.2-generic")
+    assert is_wsl() is False
+
+
+def test_resolve_host_widens_loopback_only_on_wsl(monkeypatch):
+    monkeypatch.setattr(web_module, "is_wsl", lambda: True)
+    assert resolve_host("127.0.0.1") == "0.0.0.0"
+    assert resolve_host("0.0.0.0") == "0.0.0.0"
+    assert resolve_host("192.168.1.5") == "192.168.1.5"
+
+
+def test_resolve_host_keeps_loopback_when_not_wsl(monkeypatch):
+    monkeypatch.setattr(web_module, "is_wsl", lambda: False)
+    assert resolve_host("127.0.0.1") == "127.0.0.1"
+    assert resolve_host("0.0.0.0") == "0.0.0.0"
+
+
+def test_snapshot_to_dict_non_percent_value_and_has_data():
+    d = snapshot_to_dict(UsageSnapshot("codex", weekly=Quota(30, 200, "messages")))
+    assert d["has_data"] is True
+    assert d["weekly"]["value"] == "30/200 messages (15.0%)"
+    assert d["weekly"]["bar_pct"] == 15.0
+    assert snapshot_to_dict(UsageSnapshot("codex"))["has_data"] is False
+
+
+def test_index_js_is_a_thin_template_over_server_computed_fields():
+    # The threshold/format/has-data logic lives in render.py and is sent
+    # pre-computed; the browser JS must consume those fields, not carry a
+    # second copy (which would drift when thresholds change).
+    assert "q.bar_pct" in INDEX_HTML
+    assert "q.value" in INDEX_HTML
+    assert "s.has_data" in INDEX_HTML
+    assert "quotaValue" not in INDEX_HTML
+    assert "hasData" not in INDEX_HTML
+    assert "Math.min" not in INDEX_HTML
+    assert "Math.round" not in INDEX_HTML

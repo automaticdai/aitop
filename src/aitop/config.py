@@ -13,6 +13,46 @@ USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
 PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek")
 
 
+class ConfigError(ValueError):
+    """A config file is present but invalid (bad TOML, wrong types, unreadable)."""
+
+
+def _as_float(data: dict, key: str, default: float, path: Path) -> float:
+    value = data.get(key, default)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{path}: `{key}` must be a number, got {value!r}") from None
+
+
+def _as_int(data: dict, key: str, default: int, path: Path) -> int:
+    value = data.get(key, default)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{path}: `{key}` must be an integer, got {value!r}") from None
+
+
+def _as_bool(data: dict, key: str, default: bool, path: Path) -> bool:
+    # TOML already delivers real booleans; this guard exists for the one
+    # genuinely-silent trap: bool("false") is True, so a quoted "false" in the
+    # file would otherwise be read as enabled without any complaint.
+    value = data.get(key, default)
+    if value is None or isinstance(value, bool):
+        return default if value is None else value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "yes", "on", "1"):
+            return True
+        if lowered in ("false", "no", "off", "0"):
+            return False
+    raise ConfigError(f"{path}: `{key}` must be true or false, got {value!r}") from None
+
+
 @dataclass
 class Layout:
     rows: int = 4
@@ -162,35 +202,46 @@ def _ensure_default_file(path: Path) -> None:
 
 
 def _parse_config(path: Path) -> Config:
-    data = tomllib.loads(path.read_text())
+    try:
+        data = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f"{path}: invalid TOML: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"{path}: cannot read: {exc}") from exc
+
     cfg = Config.defaults()
-    cfg.refresh_interval_s = float(data.get("refresh_interval_s", cfg.refresh_interval_s))
+    cfg.refresh_interval_s = _as_float(data, "refresh_interval_s", cfg.refresh_interval_s, path)
 
     layout_data = data.get("layout")
     if isinstance(layout_data, dict):
         if "rows" in layout_data:
-            cfg.layout.rows = int(layout_data["rows"])
+            cfg.layout.rows = _as_int(layout_data, "rows", cfg.layout.rows, path)
         if "columns" in layout_data:
-            cfg.layout.columns = int(layout_data["columns"])
+            cfg.layout.columns = _as_int(layout_data, "columns", cfg.layout.columns, path)
 
     web_data = data.get("web")
     if isinstance(web_data, dict):
         if "enabled" in web_data:
-            cfg.web.enabled = bool(web_data["enabled"])
+            cfg.web.enabled = _as_bool(web_data, "enabled", cfg.web.enabled, path)
         if "host" in web_data:
             cfg.web.host = str(web_data["host"])
         if "port" in web_data:
-            cfg.web.port = int(web_data["port"])
+            cfg.web.port = _as_int(web_data, "port", cfg.web.port, path)
 
-    for name, pdata in (data.get("providers") or {}).items():
-        pc = cfg.providers.setdefault(name, ProviderConfig())
-        if isinstance(pdata, dict):
-            if "position" in pdata:
-                pos = pdata["position"]
-                if isinstance(pos, (list, tuple)) and len(pos) == 2:
-                    pc.position = (int(pos[0]), int(pos[1]))
-            if "timeout_s" in pdata:
-                pc.timeout_s = float(pdata["timeout_s"])
+    providers_data = data.get("providers")
+    if isinstance(providers_data, dict):
+        for name, pdata in providers_data.items():
+            pc = cfg.providers.setdefault(name, ProviderConfig())
+            if isinstance(pdata, dict):
+                if "position" in pdata:
+                    pos = pdata["position"]
+                    if isinstance(pos, (list, tuple)) and len(pos) == 2:
+                        try:
+                            pc.position = (int(pos[0]), int(pos[1]))
+                        except (TypeError, ValueError):
+                            pass  # malformed position -> auto-fill, don't crash
+                if "timeout_s" in pdata:
+                    pc.timeout_s = _as_float(pdata, "timeout_s", pc.timeout_s, path)
     return cfg
 
 

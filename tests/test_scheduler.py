@@ -159,3 +159,28 @@ def test_mock_provider_unknown_name_is_a_failed_snapshot_not_a_keyerror():
     snap = asyncio.run(MockProvider("not-a-real-provider").fetch())
     assert snap.ok is False
     assert "not-a-real-provider" in snap.error
+
+
+class _Slow:
+    name = "slow"
+
+    async def fetch(self) -> UsageSnapshot:
+        await asyncio.sleep(1.0)
+        return UsageSnapshot(self.name)
+
+
+def test_per_provider_timeout_cuts_off_a_slow_fetch():
+    # config.providers[name].timeout_s is stamped onto each provider by
+    # build_providers and enforced per provider here, not by Poller's global
+    # default. A fetch that outlives its own budget yields a timed-out
+    # snapshot with a real message (a bare TimeoutError has an empty str()).
+    slow = _Slow()
+    slow.timeout_s = 0.05
+    results: list[UsageSnapshot] = []
+    poller = Poller(
+        providers=[slow], interval_s=3600.0, on_result=results.append, stagger_s=0.0
+    )
+    asyncio.run(poller.run_once())
+    assert len(results) == 1
+    assert results[0].ok is False
+    assert "timed out" in results[0].error

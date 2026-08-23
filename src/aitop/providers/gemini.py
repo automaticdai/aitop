@@ -8,8 +8,8 @@ from .pty_driver import drive_screen
 
 # Gemini's provider identity ("gemini") is driven by the Antigravity CLI
 # binary `agy` under the hood -- Google server-side deprecated OAuth for
-# "Gemini Code Assist for individuals" (IneligibleTierError, see the
-# superseded task-9-report.md), and `agy` is the confirmed, already-
+# "Gemini Code Assist for individuals" (IneligibleTierError), and `agy` is
+# the confirmed, already-
 # authenticated replacement on this account. Do NOT confuse this with the
 # `antigravity` GUI binary (a full desktop IDE/editor with no usage screen).
 #
@@ -29,7 +29,7 @@ from .pty_driver import drive_screen
 # "Models & Quota" panel with a "Weekly Limit Remaining" and "Five Hour
 # Limit Remaining" bar per model group (see tests/fixtures/gemini_usage.txt,
 # a real capture). The screen reports percentage *remaining*, not percentage
-# used (same inversion Task 8 found for Codex's `/status` screen).
+# used (same percentage-remaining inversion as Codex's `/status` screen).
 #
 # NOTE: do NOT follow /usage with a bare ESC to close the panel before
 # quitting -- verified empirically that sends a stray escape byte that agy's

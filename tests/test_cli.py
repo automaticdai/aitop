@@ -39,6 +39,15 @@ def test_web_flag_defaults_to_none():
     assert build_parser().parse_args([]).web is None
 
 
+def test_version_flag_prints_version_and_exits(capsys):
+    # action="version" prints and exits 0 rather than running the app.
+    try:
+        build_parser().parse_args(["--version"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    assert "aitop" in capsys.readouterr().out
+
+
 def test_web_flag_enables():
     assert build_parser().parse_args(["--web"]).web is True
 

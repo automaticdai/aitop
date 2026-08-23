@@ -14,7 +14,7 @@ def test_parse_real_usage_screen():
     # tests/fixtures/gemini_usage.txt is a real `agy` /usage PTY capture
     # (Antigravity CLI 1.1.16, driving the "gemini" provider identity per
     # config.PROVIDER_NAMES -- the underlying `gemini` CLI binary itself is
-    # a dead end for this account, see the superseded task-9-report.md).
+    # a dead end for this account).
     # agy shares one account across two quota pools -- this provider now
     # reports both as named groups instead of just its own: Gemini (94.33%
     # weekly remaining -> 5.67% used, 100% five-hour remaining -> 0% used)

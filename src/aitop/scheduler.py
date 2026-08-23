@@ -37,8 +37,18 @@ class Poller:
     async def _fetch_one(self, provider: Provider, index: int = 0) -> None:
         if index and self.stagger_s > 0:
             await asyncio.sleep(index * self.stagger_s)
+        # Per-provider timeout: build_providers stamps each provider with its
+        # config.providers[name].timeout_s; fall back to the Poller's global
+        # default for providers built by hand (tests, embedders).
+        timeout = getattr(provider, "timeout_s", self.timeout_s)
         try:
-            snapshot = await asyncio.wait_for(provider.fetch(), timeout=self.timeout_s)
+            snapshot = await asyncio.wait_for(provider.fetch(), timeout=timeout)
+        except asyncio.TimeoutError:
+            # asyncio.TimeoutError carries no message of its own; a bare str()
+            # would leave the row reading "ERROR —" with nothing after it.
+            snapshot = UsageSnapshot(
+                provider=provider.name, ok=False, error=f"timed out after {timeout:g}s"
+            )
         except Exception as exc:  # noqa: BLE001 — never let one provider kill the poll
             snapshot = UsageSnapshot(provider=provider.name, ok=False, error=str(exc))
         snapshot.fetched_at = time.time()

@@ -16,13 +16,19 @@ def build_providers(config: Config, mock: bool = False) -> list:
     providers = []
     for name in on:
         if mock:
-            providers.append(MockProvider(name))
+            provider = MockProvider(name)
         elif name == "deepseek":
-            providers.append(DeepSeekProvider())
+            provider = DeepSeekProvider()
         elif name == "codex":
-            providers.append(CodexProvider())
+            provider = CodexProvider()
         elif name == "gemini":
-            providers.append(GeminiProvider())
+            provider = GeminiProvider()
         elif name == "claude":
-            providers.append(ClaudeProvider())
+            provider = ClaudeProvider()
+        else:  # unreachable: place_providers only emits PROVIDER_NAMES
+            continue
+        # Wire the per-provider timeout from config so Poller enforces it per
+        # provider (previously this value was parsed and then never read).
+        provider.timeout_s = config.providers[name].timeout_s
+        providers.append(provider)
     return providers

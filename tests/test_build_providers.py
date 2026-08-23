@@ -17,3 +17,13 @@ def test_build_real_providers_skips_off_providers():
     providers = build_providers(cfg, mock=False)
     names = {p.name for p in providers}
     assert names == {"deepseek"}
+
+
+def test_build_providers_stamps_per_provider_timeout():
+    # config.providers[name].timeout_s is wired onto each provider so Poller
+    # enforces it per provider (it was previously parsed and never read).
+    cfg = Config.defaults()
+    cfg.providers["codex"].timeout_s = 7.0
+    by_name = {p.name: p for p in build_providers(cfg, mock=True)}
+    assert by_name["codex"].timeout_s == 7.0
+    assert by_name["claude"].timeout_s == 15.0  # untouched -> default

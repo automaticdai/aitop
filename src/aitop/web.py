@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 import threading
 
 import uvicorn
@@ -9,9 +10,27 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
-from .render import DISPLAY_NAME, bar_color, has_data
+from .render import DISPLAY_NAME, bar_color, bar_pct, format_quota_value, has_data
 
 log = logging.getLogger(__name__)
+
+
+def is_wsl() -> bool:
+    """True under WSL2 (the kernel release carries "microsoft" / "WSL")."""
+    release = platform.release().lower()
+    return "microsoft" in release or "wsl" in release
+
+
+def resolve_host(host: str) -> str:
+    """Widen the loopback default to 0.0.0.0 under WSL2.
+
+    WSL2's localhost forwarding cannot reach a 127.0.0.1 bind inside the VM, so
+    a Windows browser would get nothing; binding 0.0.0.0 makes http://localhost
+    work from Windows. WSL2 is NAT-isolated, so this stays host-local.
+    """
+    if is_wsl() and host == "127.0.0.1":
+        return "0.0.0.0"
+    return host
 
 
 def _quota(q: Quota | None) -> dict | None:
@@ -23,9 +42,13 @@ def _quota(q: Quota | None) -> dict | None:
         "limit": q.limit,
         "unit": q.unit,
         "reset_note": q.reset_note,
-        # pct/color are computed properties, not dataclass fields, so asdict
-        # would drop them -- the frontend needs them spelled out here.
+        # pct/color/value/bar_pct are all computed (properties or helpers), not
+        # dataclass fields, so asdict would drop them -- the frontend needs
+        # them spelled out here. `value` and `bar_pct` keep the formatting and
+        # clamp logic in one place (render.py) instead of re-implemented in JS.
         "pct": pct,
+        "bar_pct": bar_pct(pct),
+        "value": format_quota_value(q),
         "color": bar_color(pct),
     }
 
@@ -36,6 +59,7 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "provider": snap.provider,
         "display_name": DISPLAY_NAME.get(snap.provider, snap.provider),
         "ok": snap.ok,
+        "has_data": has_data(snap),
         "error": snap.error,
         "stale": stale,
         "fetched_at": snap.fetched_at,
@@ -184,33 +208,23 @@ INDEX_HTML = """<!doctype html>
         { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
       ));
     }
-    function fmt(n) { return Math.round(n); }
-    function quotaValue(q) {
-      const pct = q.pct == null ? "—" : q.pct.toFixed(1) + "%";
-      if (q.unit === "%") return pct;
-      return fmt(q.used) + "/" + fmt(q.limit) + " " + esc(q.unit) + " (" + pct + ")";
-    }
     function quotaRow(label, q) {
       const color = COLORS[q.color] || COLORS.dim;
-      const pct = q.pct == null ? 0 : Math.max(0, Math.min(100, q.pct));
       const note = q.reset_note ? '<div class="note">' + esc(q.reset_note) + "</div>" : "";
       return (
         '<div class="quota">' +
           '<div class="quota-head"><span class="label">' + esc(label) + "</span>" +
-            '<span class="value">' + esc(quotaValue(q)) + "</span></div>" +
-          '<div class="bar"><div class="bar-fill" style="width:' + pct + "%;background:" + color + '"></div></div>' +
+            '<span class="value">' + esc(q.value) + "</span></div>" +
+          '<div class="bar"><div class="bar-fill" style="width:' + q.bar_pct + "%;background:" + color + '"></div></div>' +
           note +
         "</div>"
       );
-    }
-    function hasData(s) {
-      return !!(s.daily || s.weekly || s.balance || (s.groups && s.groups.length));
     }
     function card(s) {
       let status = "";
       if (s.stale) status = '<span class="badge stale">stale — ' + esc(s.stale) + "</span>";
       else if (!s.ok) status = '<span class="badge error">' + esc(s.error || "error") + "</span>";
-      else if (!hasData(s)) status = '<span class="badge nodata">no data</span>';
+      else if (!s.has_data) status = '<span class="badge nodata">no data</span>';
 
       let body = "";
       if (s.daily) body += quotaRow("daily", s.daily);

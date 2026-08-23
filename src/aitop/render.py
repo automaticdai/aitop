@@ -79,11 +79,17 @@ def fmt_pct(pct: float | None) -> str:
     return "—" if pct is None else f"{pct:.1f}%"
 
 
+def bar_pct(pct: float | None) -> float:
+    """Percentage clamped to 0–100 for drawing a bar (None -> 0)."""
+    if pct is None:
+        return 0.0
+    return max(0.0, min(100.0, pct))
+
+
 def render_bar(pct: float | None, width: int = 24) -> str:
     if pct is None:
         return "?" * width
-    clamped = max(0.0, min(100.0, pct))
-    filled = round(clamped / 100 * width)
+    filled = round(bar_pct(pct) / 100 * width)
     return "█" * filled + "░" * (width - filled)
 
 
@@ -112,14 +118,24 @@ def _dot(color: str) -> str:
     return f"[{color}]{_DOT}[/{color}]"
 
 
+def format_quota_value(q: Quota) -> str:
+    """The human-readable value for a quota, shared by the TUI and web view.
+
+    "x/100 (x%)" is a redundant restatement for percent-based quotas
+    (Codex/Antigravity/Claude Code all report "%") -- just show the
+    percentage. Non-percent units (messages, hours) keep the fraction, since
+    used/limit is genuinely informative there. Returns plain text; callers
+    apply their own escaping (Textual markup vs HTML).
+    """
+    if q.unit == "%":
+        return fmt_pct(q.pct)
+    return f"{q.used:.0f}/{q.limit:.0f} {q.unit} ({fmt_pct(q.pct)})"
+
+
 def _quota_line(label: str, q: Quota) -> list[str]:
     color = bar_color(q.pct)
     bar = render_bar(q.pct)
-    # "x/100 (x%)" is a redundant restatement for percent-based quotas
-    # (Codex/Antigravity/Claude Code all report "%") -- just show the
-    # percentage. Non-percent units (messages, hours) keep the fraction,
-    # since used/limit is genuinely informative there.
-    value = fmt_pct(q.pct) if q.unit == "%" else f"{q.used:.0f}/{q.limit:.0f} {escape(q.unit)} ({fmt_pct(q.pct)})"
+    value = escape(format_quota_value(q))
     lines = [f"{label:<8}[{color}]{bar}[/{color}] {value}"]
     if q.reset_note:
         lines.append(f"        {escape(q.reset_note)}")

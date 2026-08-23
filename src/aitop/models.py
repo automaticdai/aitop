@@ -57,5 +57,9 @@ class UsageSnapshot:
 
 class Provider(Protocol):
     name: str
+    # Per-provider fetch timeout (seconds). Stamped by build_providers from
+    # config.providers[name].timeout_s; Poller falls back to its own global
+    # default for providers built by hand (tests, embedders).
+    timeout_s: float
 
     async def fetch(self) -> UsageSnapshot: ...

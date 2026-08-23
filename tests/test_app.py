@@ -2,8 +2,9 @@ import asyncio
 import socket
 
 from textual.containers import Grid
+from textual.widgets import Static
 
-from aitop.app import AitopApp, SnapshotRow
+from aitop.app import AitopApp, SnapshotRow, WebStatusModal
 from aitop.config import Config, ProviderConfig
 from aitop.models import Quota, UsageSnapshot
 from aitop.render import DISPLAY_NAME, LOGOS
@@ -220,3 +221,58 @@ def test_web_enabled_unmount_stops_server():
         assert not server._thread.is_alive()
 
     asyncio.run(scenario())
+
+
+def test_web_status_modal_shows_disabled_when_web_off():
+    async def scenario(app, pilot):
+        app.action_web_status()
+        await pilot.pause()
+        assert isinstance(app.screen, WebStatusModal)
+        body = app.screen.query_one("#web-status-body", Static)
+        assert "disabled" in str(body.content)
+
+    _run(scenario)
+
+
+def test_web_status_modal_shows_running_when_web_on():
+    cfg = Config(refresh_interval_s=3600.0, providers={})
+    cfg.web.enabled = True
+    cfg.web.port = _free_port()
+
+    async def scenario(app, pilot):
+        app.action_web_status()
+        await pilot.pause()
+        assert isinstance(app.screen, WebStatusModal)
+        body = app.screen.query_one("#web-status-body", Static)
+        text = str(body.content)
+        assert "running" in text
+        assert "localhost" in text
+        assert str(app.config.web.port) in text
+
+    _run(scenario, cfg)
+
+
+def test_w_shortcut_opens_web_status_modal():
+    async def scenario(app, pilot):
+        await pilot.press("w")
+        await pilot.pause()
+        assert isinstance(app.screen, WebStatusModal)
+
+    _run(scenario)
+
+
+def test_web_status_modal_url_reflects_a_non_localhost_host():
+    # The modal's job is to tell you where it's serving; a deliberately
+    # widened host must show that host in the URL, not a hardcoded localhost.
+    cfg = Config(refresh_interval_s=3600.0, providers={})
+    cfg.web.enabled = True
+    cfg.web.host = "192.168.1.5"
+    cfg.web.port = _free_port()
+
+    async def scenario(app, pilot):
+        app.action_web_status()
+        await pilot.pause()
+        body = app.screen.query_one("#web-status-body", Static)
+        assert "http://192.168.1.5:" in str(body.content)
+
+    _run(scenario, cfg)

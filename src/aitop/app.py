@@ -3,15 +3,16 @@ from __future__ import annotations
 import time
 
 from textual.app import App, ComposeResult
-from textual.containers import Grid
-from textual.widgets import Footer, Header, Static
+from textual.containers import Grid, Vertical
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Header, Static
 
 from .config import Config, layout_cells
 from .models import UsageSnapshot
 from .providers import build_providers
 from .render import DISPLAY_NAME, LOGOS, has_data, render_snapshot, render_stale
 from .scheduler import Poller
-from .web import SnapshotStore, WebServer
+from .web import SnapshotStore, WebServer, is_wsl, resolve_host
 
 
 class SnapshotRow(Static):
@@ -49,11 +50,52 @@ class SnapshotRow(Static):
             self.update(render_snapshot(snap))
 
 
+class WebStatusModal(ModalScreen):
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    WebStatusModal {
+        align: center middle;
+    }
+    #web-status-dialog {
+        width: 60;
+        padding: 1 2;
+        border: round $primary;
+        background: $surface;
+    }
+    #web-status-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #web-status-close {
+        margin-top: 1;
+        width: 100%;
+    }
+    """
+
+    def __init__(self, lines: list[str]) -> None:
+        super().__init__()
+        self._lines = lines
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="web-status-dialog"):
+            yield Static("Web view", id="web-status-title")
+            yield Static("\n".join(self._lines), id="web-status-body")
+            yield Button("Close", variant="primary", id="web-status-close")
+
+    def action_dismiss(self) -> None:
+        self.dismiss()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss()
+
+
 class AitopApp(App):
     TITLE = "aitop"
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("r", "refresh", "Refresh now"),
+        ("w", "web_status", "Web status"),
     ]
 
     def __init__(self, config: Config, mock: bool = False) -> None:
@@ -66,10 +108,12 @@ class AitopApp(App):
         # carries no server thread or shared state it never uses.
         self.web_store: SnapshotStore | None = None
         self.web_server: WebServer | None = None
+        self.web_host: str | None = None
         if config.web.enabled:
             self.web_store = SnapshotStore()
+            self.web_host = resolve_host(config.web.host)
             self.web_server = WebServer(
-                self.web_store, host=config.web.host, port=config.web.port
+                self.web_store, host=self.web_host, port=config.web.port
             )
 
     def compose(self) -> ComposeResult:
@@ -141,3 +185,29 @@ class AitopApp(App):
         # holding `r` can't stack up concurrent CLI spawns.
         if self.poller is not None:
             self.run_worker(self.poller.run_once())
+
+    def action_web_status(self) -> None:
+        if self.web_server is None:
+            lines = [
+                "status: disabled",
+                "",
+                "enable with --web, or set [web] enabled = true",
+            ]
+        else:
+            port = self.config.web.port
+            host = self.web_host or "127.0.0.1"
+            # A wildcard/loopback bind is reached as "localhost"; any other
+            # (deliberately widened) host is what the browser should open.
+            display_host = (
+                "localhost" if host in ("0.0.0.0", "127.0.0.1", "::", "::1", "localhost") else host
+            )
+            lines = [
+                "status: running",
+                f"host:   {host}",
+                f"port:   {port}",
+                f"url:    http://{display_host}:{port}",
+            ]
+            if is_wsl():
+                lines.append("")
+                lines.append("WSL: open this URL in your Windows browser")
+        self.push_screen(WebStatusModal(lines))

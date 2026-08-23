@@ -86,7 +86,7 @@ _ROWS = 100
 # variant (e.g. a Max-plan "Current week (Opus)" row, not present on this
 # Pro-plan account and never observed here) can't be mismatched into this
 # provider's single weekly slot -- same "don't let an adjacent, differently-
-# scoped number leak in" discipline Task 9's review required for Gemini's
+# scoped number leak in" discipline applied to Gemini's
 # model-group sections. The reset time (when present) is its own "Resets
 # ..." line directly below the bar -- captured verbatim, no timezone/date
 # parsing.

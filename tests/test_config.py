@@ -1,8 +1,9 @@
 from pathlib import Path
 
+import pytest
 import tomllib
 
-from aitop.config import Config, default_config_toml, layout_cells, load_config, place_providers
+from aitop.config import Config, ConfigError, default_config_toml, layout_cells, load_config, place_providers
 
 
 def test_defaults():
@@ -250,3 +251,48 @@ def test_load_partial_web_keeps_defaults(tmp_path):
 def test_default_config_toml_includes_web_section():
     data = tomllib.loads(default_config_toml())
     assert data["web"] == {"enabled": False, "host": "127.0.0.1", "port": 8787}
+
+
+def test_load_config_raises_on_invalid_toml(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("refresh_interval_s = [not valid toml")
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_load_config_raises_with_field_name_on_bad_number(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('refresh_interval_s = "fast"\n')
+    with pytest.raises(ConfigError) as exc:
+        load_config(p)
+    assert "refresh_interval_s" in str(exc.value)
+
+
+def test_load_config_raises_on_bad_int(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[web]\nport = "eighty"\n')
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_load_config_quoted_boolean_is_read_correctly(tmp_path):
+    # bool("false") is True, so a quoted "false" must read as disabled, not
+    # silently enable the web server.
+    p = tmp_path / "config.toml"
+    p.write_text('[web]\nenabled = "false"\n')
+    cfg = load_config(p)
+    assert cfg.web.enabled is False
+
+
+def test_load_config_rejects_non_boolean_string(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[web]\nenabled = "maybe"\n')
+    with pytest.raises(ConfigError):
+        load_config(p)
+
+
+def test_load_config_ignores_malformed_position_instead_of_crashing(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[providers.claude]\nposition = ["a", "b"]\n')
+    cfg = load_config(p)
+    assert cfg.providers["claude"].position is None  # falls back to auto-fill

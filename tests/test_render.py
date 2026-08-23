@@ -3,7 +3,9 @@ from aitop.render import (
     DISPLAY_NAME,
     LOGOS,
     bar_color,
+    bar_pct,
     fmt_pct,
+    format_quota_value,
     has_data,
     render_bar,
     render_snapshot,
@@ -227,3 +229,19 @@ def test_has_data():
     assert has_data(UsageSnapshot("deepseek", balance=Balance(1.0, "CNY")))
     assert has_data(UsageSnapshot("gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(1, 2, "%"))]))
     assert not has_data(UsageSnapshot("codex"))
+
+
+def test_bar_pct_clamps_and_defaults():
+    assert bar_pct(None) == 0.0
+    assert bar_pct(50.0) == 50.0
+    assert bar_pct(120.0) == 100.0
+    assert bar_pct(-5.0) == 0.0
+
+
+def test_format_quota_value_percent_shows_bare_percentage():
+    assert format_quota_value(Quota(6, 100, "%")) == "6.0%"
+    assert format_quota_value(Quota(0, 0, "%")) == "—"
+
+
+def test_format_quota_value_non_percent_keeps_fraction():
+    assert format_quota_value(Quota(30, 200, "messages")) == "30/200 messages (15.0%)"
