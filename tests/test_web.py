@@ -193,7 +193,13 @@ def test_index_js_is_a_thin_template_over_server_computed_fields():
     assert "q.bar_pct" in INDEX_HTML
     assert "q.value" in INDEX_HTML
     assert "s.has_data" in INDEX_HTML
+    assert "s.daily_label" in INDEX_HTML
     assert "quotaValue" not in INDEX_HTML
     assert "hasData" not in INDEX_HTML
     assert "Math.min" not in INDEX_HTML
     assert "Math.round" not in INDEX_HTML
+
+
+def test_snapshot_to_dict_claude_daily_label():
+    assert snapshot_to_dict(UsageSnapshot("claude"))["daily_label"] == "session"
+    assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "daily"

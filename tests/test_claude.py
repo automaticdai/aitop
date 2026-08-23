@@ -1,9 +1,12 @@
 import asyncio
+import re
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from aitop.models import Quota
 from aitop.providers import claude as claude_module
-from aitop.providers.claude import _CMD, _ROWS, _SEQ, _TOTAL_TIMEOUT, ClaudeProvider
+from aitop.providers.claude import _CMD, _ROWS, _SEQ, _TOTAL_TIMEOUT, _reset_in, ClaudeProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "claude_usage.txt").read_text()
 
@@ -21,9 +24,12 @@ def test_parse_real_usage_screen():
     assert snap.provider == "claude"
     assert snap.ok is True
     assert snap.error is None
-    assert snap.daily == Quota(
-        used=25.0, limit=100.0, unit="%", reset_note="Resets 11pm (Europe/London)"
-    )
+    # The session reset is converted to a relative duration (which depends on
+    # the current time), so assert its shape rather than an exact value.
+    assert snap.daily.used == 25.0
+    assert snap.daily.limit == 100.0
+    assert snap.daily.unit == "%"
+    assert re.fullmatch(r"Reset in \d+h \d+m", snap.daily.reset_note)
     assert snap.weekly == Quota(
         used=20.0, limit=100.0, unit="%", reset_note="Resets Aug 25, 5am (Europe/London)"
     )
@@ -47,9 +53,10 @@ def test_parse_daily_and_weekly_present():
         "  Resets Aug 25, 5am (Europe/London)\n"
     )
     snap = ClaudeProvider.parse(text)
-    assert snap.daily == Quota(
-        used=55.0, limit=100.0, unit="%", reset_note="Resets 11pm (Europe/London)"
-    )
+    assert snap.daily.used == 55.0
+    assert snap.daily.limit == 100.0
+    assert snap.daily.unit == "%"
+    assert re.fullmatch(r"Reset in \d+h \d+m", snap.daily.reset_note)
     assert snap.weekly == Quota(
         used=80.0, limit=100.0, unit="%", reset_note="Resets Aug 25, 5am (Europe/London)"
     )
@@ -59,6 +66,27 @@ def test_parse_reset_note_is_none_when_missing():
     text = "  Current session\n  ████████████▌ 55% used\n"
     snap = ClaudeProvider.parse(text)
     assert snap.daily.reset_note is None
+
+
+def test_reset_in_computes_duration_to_session_reset():
+    now = datetime(2026, 8, 23, 21, 0, tzinfo=ZoneInfo("Europe/London"))
+    assert _reset_in("Resets 11pm (Europe/London)", now=now) == "Reset in 2h 0m"
+
+
+def test_reset_in_rolls_to_tomorrow_when_past():
+    now = datetime(2026, 8, 23, 23, 30, tzinfo=ZoneInfo("Europe/London"))
+    assert _reset_in("Resets 11pm (Europe/London)", now=now) == "Reset in 23h 30m"
+
+
+def test_reset_in_parses_minutes():
+    now = datetime(2026, 8, 23, 10, 15, tzinfo=ZoneInfo("Europe/London"))
+    assert _reset_in("Resets 11:30pm (Europe/London)", now=now) == "Reset in 13h 15m"
+
+
+def test_reset_in_returns_none_for_unparseable_text():
+    assert _reset_in("Resets whenever") is None
+    assert _reset_in("Resets 11pm") is None  # no timezone
+    assert _reset_in("") is None
 
 
 def test_parse_does_not_match_per_model_weekly_variant():

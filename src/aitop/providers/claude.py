@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..models import Quota, UsageSnapshot
 from .pty_driver import drive_screen
@@ -122,7 +124,7 @@ class ClaudeProvider:
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
-        daily = _quota_from_pct_used(text, _SESSION_RE)
+        daily = _quota_from_pct_used(text, _SESSION_RE, session=True)
         weekly = _quota_from_pct_used(text, _WEEK_RE)
         return UsageSnapshot(
             "claude",
@@ -147,10 +149,52 @@ def _screen_has_quota(text: str) -> bool:
     return bool(_SESSION_RE.search(text) or _WEEK_RE.search(text))
 
 
-def _quota_from_pct_used(text: str, pattern: re.Pattern[str]) -> Quota | None:
+# Claude's "Current session" reset is a wall-clock time-of-day with a
+# timezone ("Resets 11pm (Europe/London)"); a countdown until that reset is
+# more useful on a live dashboard than the raw clock time.
+_RESET_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?\s*([ap]m)", re.IGNORECASE)
+_RESET_TZ_RE = re.compile(r"\(([^()]+)\)")
+
+
+def _reset_in(text: str, now: datetime | None = None) -> str | None:
+    """Turn "Resets 11pm (Europe/London)" into "Reset in 2h 30m".
+
+    Returns None when the text can't be parsed or the timezone is unknown, so
+    the caller keeps the verbatim note instead of dropping it. The duration is
+    measured in the reset's own timezone (the account's local time), not the
+    machine's, so it's correct no matter where aitop runs.
+    """
+    tm = _RESET_TIME_RE.search(text)
+    tzm = _RESET_TZ_RE.search(text)
+    if tm is None or tzm is None:
+        return None
+    try:
+        tz = ZoneInfo(tzm.group(1))
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+    hour = int(tm.group(1)) % 12 + (12 if tm.group(3).lower() == "pm" else 0)
+    minute = int(tm.group(2) or 0)
+    if minute >= 60:
+        return None
+
+    now = now or datetime.now(tz)
+    reset = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if reset <= now:
+        reset += timedelta(days=1)
+    total_minutes = int((reset - now).total_seconds()) // 60
+    hours, minutes = divmod(total_minutes, 60)
+    return f"Reset in {hours}h {minutes}m"
+
+
+def _quota_from_pct_used(
+    text: str, pattern: re.Pattern[str], session: bool = False
+) -> Quota | None:
     m = pattern.search(text)
     if not m:
         return None
     pct_used = float(m.group(1))
     reset_note = m.group(2) or None
+    if session and reset_note is not None:
+        reset_note = _reset_in(reset_note) or reset_note
     return Quota(used=pct_used, limit=100.0, unit="%", reset_note=reset_note)

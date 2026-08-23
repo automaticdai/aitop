@@ -245,3 +245,30 @@ def test_format_quota_value_percent_shows_bare_percentage():
 
 def test_format_quota_value_non_percent_keeps_fraction():
     assert format_quota_value(Quota(30, 200, "messages")) == "30/200 messages (15.0%)"
+
+
+def test_claude_daily_window_is_labeled_session():
+    # Claude Code's "Current session" is a rolling session, not a calendar day,
+    # so its top-level daily window reads "session" rather than "daily".
+    snap = UsageSnapshot("claude", daily=Quota(2, 100, "%"), weekly=Quota(5, 100, "%"))
+    lines = render_snapshot(snap).splitlines()
+    assert any(line.startswith("session") for line in lines)
+    assert not any(line.startswith("daily") for line in lines)
+
+
+def test_other_providers_keep_the_daily_label():
+    snap = UsageSnapshot("codex", daily=Quota(12, 50, "messages"))
+    lines = render_snapshot(snap).splitlines()
+    assert any(line.startswith("daily") for line in lines)
+    assert not any(line.startswith("session") for line in lines)
+
+
+def test_render_snapshot_group_orders_daily_before_weekly():
+    snap = UsageSnapshot(
+        "gemini",
+        groups=[QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%"))],
+    )
+    lines = render_snapshot(snap).splitlines()
+    daily_idx = next(i for i, line in enumerate(lines) if line.startswith("daily"))
+    weekly_idx = next(i for i, line in enumerate(lines) if line.startswith("weekly"))
+    assert daily_idx < weekly_idx

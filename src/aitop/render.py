@@ -142,19 +142,29 @@ def _quota_line(label: str, q: Quota) -> list[str]:
     return lines
 
 
+def daily_label(provider: str) -> str:
+    """Label for the top-level daily window.
+
+    Claude Code's "daily" is actually its "Current session" -- a rolling
+    session window that resets mid-session, not a calendar day -- so it reads
+    "session" there. Every other provider keeps the plain "daily".
+    """
+    return "session" if provider == "claude" else "daily"
+
+
 def _group_lines(group: QuotaGroup) -> list[str]:
     lines = [escape(group.label)]
-    if group.weekly is not None:
-        lines.extend(_quota_line("weekly", group.weekly))
     if group.daily is not None:
         lines.extend(_quota_line("daily", group.daily))
+    if group.weekly is not None:
+        lines.extend(_quota_line("weekly", group.weekly))
     return lines
 
 
 def _value_lines(snap: UsageSnapshot) -> list[str]:
     lines = []
     if snap.daily is not None:
-        lines.extend(_quota_line("daily", snap.daily))
+        lines.extend(_quota_line(daily_label(snap.provider), snap.daily))
     if snap.weekly is not None:
         lines.extend(_quota_line("weekly", snap.weekly))
     if snap.balance is not None:

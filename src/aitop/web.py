@@ -10,7 +10,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
-from .render import DISPLAY_NAME, bar_color, bar_pct, format_quota_value, has_data
+from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,7 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "error": snap.error,
         "stale": stale,
         "fetched_at": snap.fetched_at,
+        "daily_label": daily_label(snap.provider),
         "daily": _quota(snap.daily),
         "weekly": _quota(snap.weekly),
         "balance": (
@@ -227,7 +228,7 @@ INDEX_HTML = """<!doctype html>
       else if (!s.has_data) status = '<span class="badge nodata">no data</span>';
 
       let body = "";
-      if (s.daily) body += quotaRow("daily", s.daily);
+      if (s.daily) body += quotaRow(s.daily_label, s.daily);
       if (s.weekly) body += quotaRow("weekly", s.weekly);
       if (s.balance) {
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
