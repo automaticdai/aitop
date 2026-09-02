@@ -67,6 +67,7 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "daily_label": daily_label(snap.provider),
         "daily": _quota(snap.daily),
         "weekly": _quota(snap.weekly),
+        "monthly": _quota(snap.monthly),
         "balance": (
             {"amount": balance.amount, "currency": balance.currency, "available": balance.available}
             if balance is not None
@@ -242,6 +243,7 @@ INDEX_HTML = """<!doctype html>
       let body = "";
       if (s.daily) body += quotaRow(s.daily_label, s.daily);
       if (s.weekly) body += quotaRow("weekly", s.weekly);
+      if (s.monthly) body += quotaRow("monthly", s.monthly);
       if (s.balance) {
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
           esc(s.balance.currency) + (s.balance.available ? "" : ' <span class="badge error">insufficient</span>') + "</div>";

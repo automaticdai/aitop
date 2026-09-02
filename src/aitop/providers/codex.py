@@ -5,13 +5,20 @@ import re
 from ..models import Quota, UsageSnapshot
 from .pty_driver import DialogResponse, drive_screen_async
 
-# The update dialog defaults to installing a global update. Select Skip only
-# after both identifying strings are visible; never send dialog keys blindly
-# into an unexpected prompt.
+# Conditional keys: each entry fires only once its identifying text is on
+# screen, so no key is ever sent blindly into an unexpected prompt.
+#   - The update dialog defaults to installing a global update, so Skip is
+#     selected only after both of its identifying strings are visible.
+#   - The trailing Enter of `_SEQ[0]` is swallowed by the slash-command popup
+#     on codex-cli 0.152.0, leaving "/status" unsubmitted in the composer; the
+#     panel then only paints when the *next* keystroke arrives (~9.1s of an
+#     11s budget, measured live), so a slower start returns a screen with no
+#     limits row at all. The second Enter submits it, gated on the composer
+#     actually showing the pending command.
 _DIALOG_RESPONSES: list[DialogResponse] = [
     (("Update available", "Skip"), "\x1b[B\r"),
+    (("\u203a /status",), "\r"),
 ]
-#
 # NOTE: `/usage` renders a token-activity heatmap (Lifetime/Peak/Streak), not
 # daily/weekly quota percentages -- `/status` is the screen that renders
 # "<Label> limit: [bar] NN% left (resets ...)" rows, so that is what we drive
@@ -32,6 +39,11 @@ _TOTAL_TIMEOUT = 11.0
 # on 27 Aug)" -- captured verbatim, no timezone/date parsing.
 _WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 _DAILY_RE = re.compile(r"(?:5h|Daily) limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
+# Newer codex-cli plans (v0.152.0 on "Go", see
+# tests/fixtures/codex_usage_monthly.txt) report neither of the rows above,
+# only a single monthly pool -- so a build that knows just 5h/weekly parses
+# nothing at all and the card reads "no data".
+_MONTHLY_RE = re.compile(r"Monthly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 # The header box of both the welcome screen and the /status panel carries the
 # CLI version verbatim ("OpenAI Codex (v0.148.0)") -- the single-line client
 # info for the card.
@@ -47,7 +59,11 @@ class CodexProvider:
                 ["codex"],
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_patterns=[_DAILY_RE.pattern, _WEEKLY_RE.pattern],
+                done_patterns=[
+                    _DAILY_RE.pattern,
+                    _WEEKLY_RE.pattern,
+                    _MONTHLY_RE.pattern,
+                ],
                 dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
@@ -58,12 +74,14 @@ class CodexProvider:
     def parse(text: str) -> UsageSnapshot:
         daily = _quota_from_pct_left(text, _DAILY_RE)
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
+        monthly = _quota_from_pct_left(text, _MONTHLY_RE)
         version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "codex",
             ok=True,
             daily=daily,
             weekly=weekly,
+            monthly=monthly,
             client_info=version.group(0) if version else None,
             raw={"screen": text},
         )

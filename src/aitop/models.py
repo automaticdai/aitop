@@ -50,6 +50,10 @@ class UsageSnapshot:
     fetched_at: float = 0.0
     daily: Quota | None = None
     weekly: Quota | None = None
+    # Longest window a vendor reports on its own: codex-cli renders a
+    # "Monthly limit:" row on plans that have no 5h/weekly pair, and folding
+    # that into `weekly` would misstate when the quota actually resets.
+    monthly: Quota | None = None
     balance: Balance | None = None
     groups: list[QuotaGroup] | None = None
     # Single-line client info for the card, e.g. "Claude Code v2.1.237" or

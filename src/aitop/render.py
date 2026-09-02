@@ -138,6 +138,7 @@ def has_data(snap: UsageSnapshot) -> bool:
     return (
         snap.daily is not None
         or snap.weekly is not None
+        or snap.monthly is not None
         or snap.balance is not None
         or bool(snap.groups)
     )
@@ -303,6 +304,8 @@ def _value_lines(snap: UsageSnapshot, width: int | None = None) -> list[str]:
         lines.extend(_quota_line(daily_label(snap.provider), snap.daily, width))
     if snap.weekly is not None:
         lines.extend(_quota_line("weekly", snap.weekly, width))
+    if snap.monthly is not None:
+        lines.extend(_quota_line("monthly", snap.monthly, width))
     if snap.balance is not None:
         b = snap.balance
         lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")

@@ -186,6 +186,32 @@ def test_render_snapshot_quota_line_shows_reset_note():
     assert lines[2].strip() == "resets 14:11 on 27 Aug"
 
 
+def test_render_snapshot_renders_monthly_window():
+    # codex-cli reports a "Monthly limit:" row on some plans; it is a window
+    # in its own right, so it gets its own labelled bar rather than being
+    # folded into weekly (which would misreport the reset horizon).
+    snap = UsageSnapshot("test-provider", monthly=Quota(5, 100, "%"))
+    lines = render_snapshot(snap).splitlines()
+    assert lines[1].startswith("monthly ")
+    assert "5.0%" in lines[1]
+
+
+def test_render_snapshot_orders_windows_shortest_first():
+    snap = UsageSnapshot(
+        "codex",
+        daily=Quota(1, 100, "%"),
+        weekly=Quota(2, 100, "%"),
+        monthly=Quota(3, 100, "%"),
+    )
+    windows = {"5h", "weekly", "monthly"}
+    labels = [
+        line.split()[0]
+        for line in render_snapshot(snap).splitlines()
+        if line.split() and line.split()[0] in windows
+    ]
+    assert labels == ["5h", "weekly", "monthly"]
+
+
 def test_render_snapshot_quota_line_omits_reset_line_when_absent():
     snap = UsageSnapshot("codex", weekly=Quota(0, 100, "%"))
     out = render_snapshot(snap)
@@ -362,6 +388,7 @@ def test_render_stale_keeps_last_good_groups():
 
 def test_has_data():
     assert has_data(UsageSnapshot("codex", daily=Quota(1, 2, "messages")))
+    assert has_data(UsageSnapshot("codex", monthly=Quota(5, 100, "%")))
     assert has_data(UsageSnapshot("deepseek", balance=Balance(1.0, "CNY")))
     assert has_data(UsageSnapshot("gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(1, 2, "%"))]))
     assert not has_data(UsageSnapshot("codex"))

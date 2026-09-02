@@ -1,0 +1,34 @@
+╭──────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.152.0)                       │
+│                                                  │
+│ model:     gpt-5.6-terra high   /model to change │
+│ directory: ~/.cache/aitop/provider-workspace     │
+╰──────────────────────────────────────────────────╯
+
+  Tip: New For a limited time, Codex is included in your plan for free – let’s build together.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+/status
+
+╭────────────────────────────────────────────────────────────────────────────────╮
+│  >_ OpenAI Codex (v0.152.0)                                                    │
+│                                                                                │
+│ Visit https://chatgpt.com/codex/settings/usage for up-to-date                  │
+│ information on rate limits and credits                                         │
+│                                                                                │
+│  Model:                gpt-5.6-terra (reasoning high, summaries auto)          │
+│  Directory:            ~/.cache/aitop/provider-workspace                       │
+│  Permissions:          Workspace (Ask for approval)                            │
+│  Agents.md:            <none>                                                  │
+│  Account:              user@example.com      (Go)                              │
+│  Collaboration mode:   Default                                                 │
+│  Session:              01a01f89-9172-72f3-ac10-d397ce951e1c                    │
+│                                                                                │
+│  Monthly limit:        [███████████████████░] 95% left (resets 02:42 on 2 Oct) │
+╰────────────────────────────────────────────────────────────────────────────────╯
+
+
+› /quit
+
+  /quit  exit Codex

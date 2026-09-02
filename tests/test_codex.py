@@ -6,6 +6,9 @@ from aitop.providers import codex as codex_module
 from aitop.providers.codex import _DIALOG_RESPONSES, _SEQ, _TOTAL_TIMEOUT, CodexProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "codex_usage.txt").read_text()
+FIXTURE_MONTHLY = (
+    Path(__file__).parent / "fixtures" / "codex_usage_monthly.txt"
+).read_text()
 
 
 def test_parse_real_status_screen():
@@ -22,6 +25,26 @@ def test_parse_real_status_screen():
     )
     assert snap.daily is None
     assert snap.raw == {"screen": FIXTURE}
+
+
+def test_parse_real_monthly_status_screen():
+    # tests/fixtures/codex_usage_monthly.txt is a real `codex /status` PTY
+    # capture (v0.152.0). Newer codex-cli plans report a single "Monthly
+    # limit:" row instead of the 5h/Weekly pair, so a build that only knows
+    # those two windows parses nothing at all and the card reads "no data".
+    snap = CodexProvider.parse(FIXTURE_MONTHLY)
+    assert snap.ok is True
+    assert snap.monthly == Quota(
+        used=5.0, limit=100.0, unit="%", reset_note="resets 02:42 on 2 Oct"
+    )
+    assert snap.daily is None
+    assert snap.weekly is None
+    assert snap.client_info == "OpenAI Codex (v0.152.0)"
+
+
+def test_parse_monthly_absent_when_screen_has_none():
+    snap = CodexProvider.parse(FIXTURE)
+    assert snap.monthly is None
 
 
 def test_parse_captures_client_info_version_banner():
@@ -41,6 +64,7 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.ok is True
     assert snap.daily is None
     assert snap.weekly is None
+    assert snap.monthly is None
 
 
 def test_parse_daily_and_weekly_present():
@@ -83,6 +107,14 @@ def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch
     assert len(calls) == 1
     assert calls[0][1]["dialog_responses"] == _DIALOG_RESPONSES
     assert calls[0][1]["done_patterns"]
+    # Every window this parser understands has to be a done-pattern: a
+    # missing one means the capture never returns early and every poll burns
+    # the full _TOTAL_TIMEOUT waiting for a row that already arrived.
+    assert set(calls[0][1]["done_patterns"]) == {
+        codex_module._DAILY_RE.pattern,
+        codex_module._WEEKLY_RE.pattern,
+        codex_module._MONTHLY_RE.pattern,
+    }
 
 
 def test_update_dialog_is_conditional_not_a_blind_key_sequence():
@@ -91,7 +123,26 @@ def test_update_dialog_is_conditional_not_a_blind_key_sequence():
     # global CLI. The skip keys must be tied to identifying dialog text rather
     # than sent blindly into whatever happens to be on screen.
     assert _SEQ[0] == (4.5, "/status\r")
-    assert _DIALOG_RESPONSES == [(('Update available', 'Skip'), "\x1b[B\r")]
+    assert (("Update available", "Skip"), "\x1b[B\r") in _DIALOG_RESPONSES
+
+
+def test_every_conditional_response_is_gated_on_screen_text():
+    # The whole point of this list is that no key is ever sent into a screen
+    # nobody identified first -- an entry with no markers is a blind keypress.
+    assert _DIALOG_RESPONSES
+    for markers, keys in _DIALOG_RESPONSES:
+        assert markers and all(markers), (markers, keys)
+
+
+def test_pending_status_command_is_submitted_by_a_second_enter():
+    # codex-cli 0.152.0 leaves "/status" sitting *unsubmitted* in the composer
+    # after the Enter that ends _SEQ[0]: the slash-command popup swallows it.
+    # Measured live, the panel then only paints when the next keystroke
+    # arrives (the /quit at 9.0s), i.e. ~9.1s into an 11s budget -- so any
+    # slower start returns a screen with no limits row at all and the card
+    # reads "no data". The extra Enter is gated on the composer actually
+    # showing the pending command, so it can never land in a dialog.
+    assert (("\u203a /status",), "\r") in _DIALOG_RESPONSES
 
 
 def test_total_timeout_leaves_margin_under_scheduler_default():

@@ -18,6 +18,16 @@ from aitop.web import (
 )
 
 
+def test_snapshot_to_dict_serializes_monthly_window():
+    # codex-cli's "Monthly limit:" row travels to the web view like any other
+    # window; without it the browser card reads "no data" while the TUI shows
+    # a bar.
+    d = snapshot_to_dict(UsageSnapshot("codex", monthly=Quota(5, 100, "%")))
+    assert d["has_data"] is True
+    assert d["monthly"]["pct"] == 5.0
+    assert d["monthly"]["value"] == "5.0%"
+
+
 def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
     snap = UsageSnapshot("claude", daily=Quota(25, 100, "%"))
     d = snapshot_to_dict(snap)
