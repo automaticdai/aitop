@@ -6,7 +6,6 @@ import time
 from collections.abc import Callable
 
 from .models import Provider, UsageSnapshot
-from .providers.pty_driver import request_stop
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +32,7 @@ class Poller:
         self.stagger_s = stagger_s
         self._stop = asyncio.Event()
         self._round_in_flight = False
+        self._fetch_tasks: set[asyncio.Task[None]] = set()
 
     async def _fetch_one(self, provider: Provider, index: int = 0) -> None:
         if index and self.stagger_s > 0:
@@ -72,11 +72,24 @@ class Poller:
             log.debug("fetch round already in flight — skipping this request")
             return
         self._round_in_flight = True
+        tasks = {
+            asyncio.create_task(self._fetch_one(provider, index))
+            for index, provider in enumerate(self.providers)
+        }
+        self._fetch_tasks.update(tasks)
         try:
-            await asyncio.gather(
-                *(self._fetch_one(p, i) for i, p in enumerate(self.providers))
-            )
+            await asyncio.gather(*tasks)
+        except asyncio.CancelledError:
+            # stop() cancels every provider task. Each PTY provider then waits
+            # for its helper to terminate and reap the CLI child before its
+            # cancellation completes, so a later round cannot overlap it.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            if not self._stop.is_set():
+                raise
         finally:
+            self._fetch_tasks.difference_update(tasks)
             self._round_in_flight = False
 
     async def run(self) -> None:
@@ -94,8 +107,7 @@ class Poller:
 
     def stop(self) -> None:
         self._stop.set()
-        # In-flight drive_screen() calls run in asyncio.to_thread worker
-        # threads that can't be cancelled; asking them to abort makes each one
-        # break its loop, SIGKILL its child CLI, and return, so quit doesn't
-        # hang for the full capture budget (and leaves no CLI processes alive).
-        request_stop()
+        # Cancelling a provider propagates into drive_screen_async(), which
+        # terminates its helper and waits for the PTY child to be reaped.
+        for task in tuple(self._fetch_tasks):
+            task.cancel()

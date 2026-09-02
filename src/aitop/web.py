@@ -62,6 +62,7 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "has_data": has_data(snap),
         "error": snap.error,
         "stale": stale,
+        "client_info": snap.client_info,
         "fetched_at": snap.fetched_at,
         "daily_label": daily_label(snap.provider),
         "daily": _quota(snap.daily),
@@ -181,6 +182,9 @@ INDEX_HTML = """<!doctype html>
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   .card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
   .card h2 { font-size: 15px; margin: 0; }
+  /* Client-info caption at the top of the card body -- same placement and
+     muted treatment as the TUI's line under the logo. */
+  .client-info { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 500; white-space: nowrap; }
   .badge.stale, .badge.nodata { background: #f9ab0022; color: #b7791f; }
   .badge.error { background: #ea433522; color: #c5221f; }
@@ -191,8 +195,16 @@ INDEX_HTML = """<!doctype html>
   .bar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
   .note { font-size: 12px; color: var(--muted); margin-top: 4px; }
   .balance { font-size: 13px; margin: 8px 0; }
+  /* Providers reporting more than one pool (Antigravity's Gemini and
+     Claude & GPT-OSS groups) otherwise stack, making that card twice as tall
+     as the others. auto-fit lays them out as columns whenever the card is
+     wide enough and reflows them back to stacked when it isn't -- the same
+     responsive behaviour the TUI does by measuring its own width. */
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); column-gap: 16px; }
   .group { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--border); }
-  .group-label { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  /* Dimmed to match the TUI: the label names the pool, the bars under it
+     carry the actual reading. */
+  .group-label { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
   .empty { color: var(--muted); }
 </style>
 </head>
@@ -234,16 +246,25 @@ INDEX_HTML = """<!doctype html>
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
           esc(s.balance.currency) + (s.balance.available ? "" : ' <span class="badge error">insufficient</span>') + "</div>";
       }
-      (s.groups || []).forEach(g => {
-        body += '<div class="group"><div class="group-label">' + esc(g.label) + "</div>";
-        if (g.daily) body += quotaRow("daily", g.daily);
-        if (g.weekly) body += quotaRow("weekly", g.weekly);
+      const groups = s.groups || [];
+      if (groups.length) {
+        body += '<div class="groups">';
+        groups.forEach(g => {
+          body += '<div class="group"><div class="group-label">' + esc(g.label) + "</div>";
+          if (g.daily) body += quotaRow("daily", g.daily);
+          if (g.weekly) body += quotaRow("weekly", g.weekly);
+          body += "</div>";
+        });
         body += "</div>";
-      });
+      }
+
+      const clientInfo = s.client_info
+        ? '<div class="client-info">' + esc(s.client_info) + "</div>"
+        : "";
 
       return (
         '<section class="card"><header><h2>' + esc(s.display_name) + "</h2>" + status + "</header>" +
-        body + "</section>"
+        clientInfo + body + "</section>"
       );
     }
     async function refresh() {

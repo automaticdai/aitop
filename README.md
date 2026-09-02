@@ -81,13 +81,14 @@ For Codex/Antigravity/Claude Code, "already logged in" means: run that vendor's 
 
 ### The PTY-scrape caveat
 
-For Codex, Antigravity, and Claude Code, `aitop` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), drives it with a scripted sequence of keystrokes (dismiss any first-run dialog, run the CLI's own usage/status slash command, wait for it to render), and then parses the resulting on-screen text with regular expressions to pull out percentages.
+For Codex, Antigravity, and Claude Code, `aitop` does not talk to any usage API directly. Instead it spawns the vendor's own interactive CLI inside a pseudo-terminal (PTY), responds only to specifically recognized startup dialogs, runs the CLI's own usage/status slash command, and then parses the resulting on-screen text with regular expressions to pull out percentages.
 
 This is a deliberate v1 tradeoff, not an accident or a bug:
 
 - It requires each vendor's CLI to be **installed and already authenticated** on the same machine `aitop` runs on — `aitop` piggybacks on that CLI's session rather than doing its own OAuth.
+- Each CLI runs in a private app-owned working directory under the user cache, not the directory where you launched `aitop`. Claude Code and Antigravity may ask whether that directory is trusted on first use; `aitop` accepts only their specifically recognized trust screens. This prevents polling from trusting your current repository or loading its project-scoped configuration, while the stable path avoids creating a new vendor trust record on every poll.
 - It is inherently fragile to each CLI changing its own UI: if a future version of `codex`, `agy`, or `claude` renames its usage command, restyles its output, or adds/removes a dialog, the corresponding adapter's screen-scrape can silently stop matching and start reporting "no data" for that window (each adapter is written to fail closed — returning `None` for a quota it can't confidently parse — rather than fabricate a number).
-- Each fetch briefly spawns and kills a real CLI subprocess on every poll. The capture ends as soon as the numbers the adapter needs are on screen, and is hard-bounded by an internal timeout (~11s), so a slow-starting CLI can occasionally show up as a timeout on a given cycle even when everything is configured correctly. The three CLIs are staggered rather than all launched at the same instant, and a manual `r` refresh is ignored while a fetch round is already running.
+- Each fetch briefly spawns and kills a real CLI subprocess on every poll. PTY work runs in a dedicated single-threaded helper process, avoiding an unsafe fork of the multithreaded dashboard. Cancellation waits for that helper to kill and reap its CLI child, so timed-out or interrupted rounds cannot leave hidden captures overlapping the next round. The capture ends as soon as the needed numbers are on screen and is hard-bounded by an internal timeout (~11s). The three CLIs are staggered rather than launched together, and a manual `r` refresh is ignored while a round is already running.
 
 If a vendor ever ships a real, individually-authenticatable HTTP usage API, that provider's adapter could be swapped for a direct HTTP call (like DeepSeek's) without changing anything else in the app.
 
@@ -133,7 +134,7 @@ port = 8787
   - `columns` — number of columns. Defaults to `1`.
 - `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`). Any provider omitted from the file keeps its defaults.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
-  - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. (The PTY adapters still cap their own internal screen-capture at ~11 s regardless, so a lower value doesn't shorten that subprocess work — see "The PTY-scrape caveat".)
+  - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. PTY adapters also cap normal captures at about 11 seconds; a lower configured timeout cancels and cleans up the helper and CLI child immediately.
 - `[web]` — the optional web view (off by default). When enabled, `aitop` also serves a live web page and JSON endpoint.
   - `enabled` — whether to start the web server. Defaults to `false`. `--web` / `--no-web` on the command line override this.
   - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only), widened automatically to `"0.0.0.0"` under WSL2 so a Windows browser can reach `localhost`.

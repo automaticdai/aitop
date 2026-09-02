@@ -30,7 +30,15 @@ class DeepSeekProvider:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-            return UsageSnapshot(self.name, ok=True, balance=self._parse_balance(data), raw=data)
+            # DeepSeek is a REST API with no CLI, so there's no version to
+            # report -- the client line is name-only.
+            return UsageSnapshot(
+                self.name,
+                ok=True,
+                balance=self._parse_balance(data),
+                client_info="DeepSeek API",
+                raw=data,
+            )
         except Exception as exc:  # noqa: BLE001
             return UsageSnapshot(self.name, ok=False, error=str(exc))
 

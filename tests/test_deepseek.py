@@ -46,6 +46,17 @@ def test_fetch_ok(monkeypatch):
     assert snap.balance == Balance(225.05, "CNY", available=True)
 
 
+def test_fetch_ok_sets_client_info(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=FIXTURE)
+
+    provider = DeepSeekProvider(transport=httpx.MockTransport(handler))
+    snap = __import__("asyncio").run(provider.fetch())
+    assert snap.client_info == "DeepSeek API"
+
+
 def test_fetch_malformed_balance_returns_error_not_raise(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
 

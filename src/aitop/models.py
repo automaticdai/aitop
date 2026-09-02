@@ -52,6 +52,10 @@ class UsageSnapshot:
     weekly: Quota | None = None
     balance: Balance | None = None
     groups: list[QuotaGroup] | None = None
+    # Single-line client info for the card, e.g. "Claude Code v2.1.237" or
+    # "DeepSeek API" (name-only when the client has no parseable version).
+    # None = omit the line. Rendered by render.py under the provider logo.
+    client_info: str | None = None
     raw: dict = field(default_factory=dict)
 
 

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import re
 
 from ..models import Quota, QuotaGroup, UsageSnapshot
-from .pty_driver import drive_screen
+from .pty_driver import DialogResponse, drive_screen_async
 
 # Gemini's provider identity ("gemini") is driven by the Antigravity CLI
 # binary `agy` under the hood -- Google server-side deprecated OAuth for
@@ -13,17 +12,13 @@ from .pty_driver import drive_screen
 # authenticated replacement on this account. Do NOT confuse this with the
 # `antigravity` GUI binary (a full desktop IDE/editor with no usage screen).
 #
-# Defensive dialog-skip always sent first: a fresh workspace shows a
-# "Do you trust the contents of this project?" first-run consent dialog
-# with "Yes, I trust this folder" pre-selected, where a bare Enter accepts
-# it. Once a workspace has been trusted, this state persists (observed in
-# ~/.gemini/config/projects/*.json) and subsequent runs skip the dialog
-# entirely, landing straight on the empty "> " compose prompt -- there a
-# bare Enter is a harmless no-op (verified: does not submit an empty
-# message to the model). fetch() runs unattended on a recurring poll
-# indefinitely and may run against a not-yet-trusted workspace/config on
-# some future machine, so this keystroke is always sent regardless of
-# whether a dialog was observed in this environment.
+# drive_screen_async always launches in a private app-owned workspace, so
+# accepting this exact trust dialog cannot approve the user's repository or
+# load project-scoped configuration. The response is sent only after both
+# identifying strings are visible, never blindly into an unrelated prompt.
+_DIALOG_RESPONSES: list[DialogResponse] = [
+    (("Do you trust the contents of this project?", "Yes, I trust this folder"), "\r"),
+]
 #
 # `/usage` (aliased `/quota`) is the real slash command that renders a
 # "Models & Quota" panel with a "Weekly Limit Remaining" and "Five Hour
@@ -37,13 +32,11 @@ from .pty_driver import drive_screen
 # corrupting the compose box (observed literal "0;1u" garbage typed into the
 # prompt). drive_screen's own unconditional SIGKILL at total_timeout cleans
 # up the child process regardless, so no cleanup keystroke is needed.
-_SEQ = [(2.0, "\r"), (4.5, "/usage\r")]
+_SEQ = [(4.5, "/usage\r")]
 
 # Kept comfortably under the scheduler's default per-provider timeout_s
-# (15.0s, src/aitop/scheduler.py) so drive_screen's own SIGKILL cleanup
-# fires before asyncio.wait_for would otherwise cancel the awaiting
-# coroutine and leave the PTY child to run out its full budget unsupervised
-# (asyncio.to_thread cannot interrupt an already-running thread on cancel).
+# (15.0s, src/aitop/scheduler.py); scheduler cancellation also terminates and
+# reaps the helper process and its PTY child.
 _TOTAL_TIMEOUT = 11.0
 
 # agy's `/usage` screen groups quota by model family sharing a pool -- this
@@ -82,17 +75,12 @@ class GeminiProvider:
 
     async def fetch(self) -> UsageSnapshot:
         try:
-            # drive_screen() is a blocking, synchronous call (pty.fork,
-            # select loop, os.read/os.write) with no internal await points --
-            # running it inline here would freeze the whole asyncio event
-            # loop (all providers, the Textual UI) for up to total_timeout
-            # on every poll. Offload it to a worker thread instead.
-            text = await asyncio.to_thread(
-                drive_screen,
+            text = await drive_screen_async(
                 ["agy"],
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_when=_screen_has_quota,
+                done_patterns=[re.escape(_OTHER_SECTION_END)],
+                dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -117,24 +105,15 @@ class GeminiProvider:
 
         # Top-level daily/weekly deliberately stay None: groups is this
         # provider's sole source of data now, so nothing renders twice.
-        return UsageSnapshot("gemini", ok=True, groups=groups, raw={"screen": text})
-
-
-def _screen_has_quota(text: str) -> bool:
-    """True once both model groups' quota bars are on screen.
-
-    Handed to drive_screen as its early-exit predicate: the capture is done
-    the moment the exact rows parse() reads are rendered, so a poll (and a
-    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
-    screen that already has everything. The Claude/GPT-OSS group renders
-    below the Gemini group, so checking only the Gemini section (as this
-    used to) could fire before the second group has painted, losing its
-    numbers for that poll. The footer text is the last thing the panel
-    renders -- once it's present, both groups above it are guaranteed to
-    have rendered too, top-to-bottom, in the same pass.
-    """
-    return _OTHER_SECTION_END in text
-
+        # The /usage panel carries no version banner, so client_info is
+        # name-only (matching DISPLAY_NAME) rather than fabricated.
+        return UsageSnapshot(
+            "gemini",
+            ok=True,
+            groups=groups,
+            client_info="Antigravity (agy)",
+            raw={"screen": text},
+        )
 
 def _section(text: str, start_marker: str, end_marker: str) -> str:
     start = text.find(start_marker)

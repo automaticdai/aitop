@@ -134,6 +134,40 @@ def test_periodic_loop_and_manual_refresh_share_the_in_flight_guard():
     asyncio.run(scenario())
 
 
+def test_stop_cancels_started_fetches_and_prevents_staggered_ones_starting():
+    starts: list[str] = []
+    cancelled: list[str] = []
+
+    class Cancellable:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def fetch(self) -> UsageSnapshot:
+            starts.append(self.name)
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.append(self.name)
+                raise
+            return UsageSnapshot(self.name)
+
+    async def scenario() -> None:
+        poller = Poller(
+            providers=[Cancellable(name) for name in ("a", "b", "c")],
+            interval_s=3600.0,
+            on_result=lambda s: None,
+            stagger_s=0.2,
+        )
+        loop_task = asyncio.create_task(poller.run())
+        await asyncio.sleep(0.05)
+        poller.stop()
+        await asyncio.wait_for(loop_task, timeout=1.0)
+
+    asyncio.run(scenario())
+    assert starts == ["a"]
+    assert cancelled == ["a"]
+
+
 def test_on_result_exception_does_not_kill_the_poll():
     # An exception raised by the UI callback (e.g. a row lookup for a
     # provider name that has no row) used to propagate out of the gather and

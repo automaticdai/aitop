@@ -276,3 +276,97 @@ def test_web_status_modal_url_reflects_a_non_localhost_host():
         assert "http://192.168.1.5:" in str(body.content)
 
     _run(scenario, cfg)
+
+
+def _gemini_two_group_snapshot():
+    from aitop.models import QuotaGroup
+
+    return UsageSnapshot(
+        "gemini",
+        groups=[
+            QuotaGroup(
+                label="Gemini",
+                daily=Quota(0, 100, "%"),
+                weekly=Quota(6, 100, "%", reset_note="Refreshes in 97h 24m"),
+            ),
+            QuotaGroup(
+                label="Claude & GPT-OSS",
+                daily=Quota(0, 100, "%"),
+                weekly=Quota(35, 100, "%", reset_note="Refreshes in 97h 25m"),
+            ),
+        ],
+    )
+
+
+def test_card_width_is_derived_from_the_terminal_not_measured():
+    # The width has to be known *before* layout runs: a row that rewrote its
+    # own content from its own resize handler landed inside the layout pass
+    # measuring it, and the card came out a line short. So the app computes it
+    # from the terminal size and the column count, and it must agree with what
+    # the widget actually ends up with.
+    cfg = Config(
+        refresh_interval_s=3600.0,
+        providers={"gemini": ProviderConfig(position=(1, 1))},
+    )
+    cfg.layout.rows, cfg.layout.columns = 1, 1
+
+    async def scenario(app, pilot):
+        app._apply(_gemini_two_group_snapshot())
+        await pilot.pause()
+        row = app.query_one("#row-gemini", SnapshotRow)
+        assert app._card_width() == row.content_size.width
+        header = next(
+            line for line in str(row.content).splitlines() if "Gemini" in line
+        )
+        assert "Claude & GPT-OSS" in header
+
+    _run(scenario, cfg)
+
+
+def test_card_is_tall_enough_for_every_line_it_renders():
+    # Regression guard for the clipped bar: `grid_rows: auto` sized the row
+    # without budgeting for the card's border or its bottom margin, so the
+    # last line -- Antigravity's second `weekly` bar -- was silently cut off.
+    cfg = Config(
+        refresh_interval_s=3600.0,
+        providers={"gemini": ProviderConfig(position=(1, 1))},
+    )
+    cfg.layout.rows, cfg.layout.columns = 1, 1
+
+    async def scenario(app, pilot):
+        app._apply(_gemini_two_group_snapshot())
+        await pilot.pause()
+        row = app.query_one("#row-gemini", SnapshotRow)
+        rendered = len(str(row.content).splitlines())
+        assert row.content_size.height >= rendered, (
+            f"card shows {row.content_size.height} of {rendered} lines"
+        )
+
+    _run(scenario, cfg)
+
+
+def test_row_re_renders_when_a_resize_changes_the_layout():
+    # The stacked/side-by-side choice depends on width, which changes without
+    # any new snapshot arriving -- so a resize has to re-render the last one.
+    cfg = Config(
+        refresh_interval_s=3600.0,
+        providers={"gemini": ProviderConfig(position=(1, 1))},
+    )
+    cfg.layout.rows, cfg.layout.columns = 1, 1
+
+    async def scenario(app, pilot):
+        row = app.query_one("#row-gemini", SnapshotRow)
+        app._apply(_gemini_two_group_snapshot())
+        await pilot.pause()
+
+        def stacked() -> bool:
+            lines = str(row.content).splitlines()
+            header = next(line for line in lines if "Gemini" in line)
+            return "Claude & GPT-OSS" not in header
+
+        assert not stacked()
+        await pilot.resize_terminal(40, 24)  # too narrow for two columns
+        await pilot.pause()
+        assert stacked()
+
+    _run(scenario, cfg)

@@ -4,13 +4,21 @@ import time
 
 from textual.app import App, ComposeResult
 from textual.containers import Grid, Vertical
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Static
 
 from .config import Config, layout_cells
 from .models import UsageSnapshot
 from .providers import build_providers
-from .render import DISPLAY_NAME, LOGOS, has_data, render_snapshot, render_stale
+from .render import (
+    DISPLAY_NAME,
+    has_data,
+    render_loading,
+    render_snapshot,
+    render_stale,
+    visual_height,
+)
 from .scheduler import Poller
 from .web import SnapshotStore, WebServer, is_wsl, resolve_host
 
@@ -29,25 +37,89 @@ class SnapshotRow(Static):
     """
 
     def __init__(self, provider: str) -> None:
-        logo = LOGOS.get(provider)
-        initial = f"{logo}\n\nloading…" if logo else "loading…"
+        initial = render_loading(provider)
         super().__init__(initial, id=f"row-{provider}")
         self.provider = provider
         self.border_title = DISPLAY_NAME.get(provider, provider)
         self._last_good: UsageSnapshot | None = None
+        # Kept so the row can be re-rendered on resize: whether a
+        # multi-group provider lays its groups out side by side depends on
+        # the width available, which changes without any new snapshot.
+        self._snap: UsageSnapshot | None = None
+        self._width: int | None = None
+        # Rows of terminal this card needs, border included. Read by
+        # AitopApp._sync_grid_rows; the initial value covers the logo plus
+        # "loading…" before any snapshot has arrived.
+        self.needed_height = visual_height(initial, None) + 2
 
-    def apply(self, snap: UsageSnapshot) -> None:
+    def apply(self, snap: UsageSnapshot, width: int | None = None) -> None:
+        self._snap = snap
+        self._width = width
+        self._render_row()
+
+    def on_resize(self) -> None:
+        # Resize events reach widgets, not the App, so the terminal-size
+        # change is noticed here and handed straight back up: the card width
+        # is a property of the terminal and the column count, not of this
+        # widget's own measured size (see AitopApp._card_width).
+        app = self.app
+        if isinstance(app, AitopApp):
+            app.sync_cards()
+
+    def width_differs(self, width: int | None) -> bool:
+        return width != self._width
+
+    def resize_to(self, width: int | None) -> None:
+        """Re-render for a new card width (the terminal was resized)."""
+        if width == self._width:
+            return
+        self._width = width
+        if self._snap is None:
+            # Still on the placeholder -- it carries the logo, which is itself
+            # dropped on cards too narrow to draw it without wrapping.
+            text = render_loading(self.provider, width)
+            self._set_height(text)
+            self.update(text)
+        else:
+            self._render_row()
+
+    # NB: not `_render` -- that is Textual's own internal Widget method, and
+    # shadowing it makes the compositor read None where it expects a visual.
+    def _render_row(self) -> None:
+        snap = self._snap
+        if snap is None:
+            return
+        # The width is handed in by the app, computed from the terminal size
+        # (see AitopApp._card_width). It is deliberately NOT read from
+        # self.content_size: this row rewrites its own content in response to
+        # width, and doing that from the widget's own resize handler lands
+        # inside the layout pass that is busy measuring it -- the auto height
+        # is then computed from the pre-resize content and the card is left a
+        # line short, clipping its last line off. Deriving the width from the
+        # terminal instead means the content is final before layout runs.
+        width = self._width
         # Spec §7: on failure the row is marked stale and keeps showing the
         # last good value. PTY scraping is acknowledged-fragile, so a single
         # transient timeout must not wipe out numbers that were fine 30s ago.
         if snap.ok:
             if has_data(snap):
                 self._last_good = snap
-            self.update(render_snapshot(snap))
+            text = render_snapshot(snap, width)
         elif self._last_good is not None:
-            self.update(render_stale(self._last_good, snap.error))
+            text = render_stale(self._last_good, snap.error, width)
         else:
-            self.update(render_snapshot(snap))
+            text = render_snapshot(snap, width)
+        self._set_height(text)
+        self.update(text)
+
+    def _set_height(self, text: str) -> None:
+        # Stated outright rather than left to `height: auto`. The rendered
+        # line count is known exactly here. +2 for the border rows; Textual's
+        # box-sizing is border-box. AitopApp._sync_grid_rows then sizes the
+        # enclosing grid row to match -- both halves are needed, since a card
+        # cannot grow past its grid row however tall it asks to be.
+        self.needed_height = visual_height(text, self._width) + 2
+        self.styles.height = self.needed_height
 
 
 class WebStatusModal(ModalScreen):
@@ -145,6 +217,57 @@ class AitopApp(App):
         grid.styles.grid_rows = "auto"
         return grid
 
+    # The gutter set on the grid above, and SnapshotRow's own round border
+    # (1 cell each side) plus its `padding: 0 1`.
+    _GUTTER = 2
+    _CHROME = 4
+    # SnapshotRow's `margin: 0 0 1 0`.
+    _ROW_MARGIN = 1
+
+    def _card_width(self) -> int | None:
+        """Content width one card gets, derived from the terminal size.
+
+        Computed rather than measured so a row's content is settled *before*
+        Textual lays the grid out -- see SnapshotRow._render_row. Returns None
+        when the terminal size isn't known yet, which render.py reads as
+        "unknown width" and answers with the layout that cannot clip.
+        """
+        columns = max(1, self.config.layout.columns)
+        total = self.size.width
+        if total <= 0:
+            return None
+        cell = (total - self._GUTTER * (columns - 1)) // columns
+        inner = cell - self._CHROME
+        return inner if inner > 0 else None
+
+    def _sync_grid_rows(self) -> None:
+        """Size each grid row to its tallest card.
+
+        `grid_rows: auto` measures a bordered child without budgeting for its
+        border, so every card came out a line short and quietly clipped its
+        last line -- which on the Antigravity card is a whole `weekly` bar.
+        Each row is given the height its own cards report instead, which keeps
+        the reason `auto` was chosen (rows hug their content rather than
+        splitting the screen evenly) without the under-measurement.
+        """
+        try:
+            grid = self.query_one(Grid)
+        except NoMatches:
+            return
+        cells = layout_cells(self.config)
+        columns = max(1, self.config.layout.columns)
+        needed = {row.provider: row.needed_height for row in self.query(SnapshotRow)}
+        heights = []
+        for r in range(self.config.layout.rows):
+            in_row = cells[r * columns : (r + 1) * columns]
+            heights.append(max((needed.get(n, 0) for n in in_row if n), default=1))
+        # A cell still needs its two border rows even with nothing in it, and
+        # the grid row has to cover SnapshotRow's own bottom margin on top of
+        # the card itself -- without that the card lands one row short again.
+        grid.styles.grid_rows = " ".join(
+            str(max(3, h) + self._ROW_MARGIN) for h in heights
+        )
+
     def on_mount(self) -> None:
         providers = build_providers(self.config, mock=self.mock)
         self.poller = Poller(
@@ -170,15 +293,33 @@ class AitopApp(App):
         # name comes from the config file, so it may match no row at all (a
         # typo) or not even be a valid CSS selector. An unmatched snapshot is
         # simply ignored instead of raising NoMatches into the poll loop.
+        width = self._card_width()
         for row in self.query(SnapshotRow):
             if row.provider == snap.provider:
-                row.apply(snap)
+                row.apply(snap, width)
+                self._sync_grid_rows()
                 break
         self.sub_title = time.strftime(
             "last refresh %H:%M:%S", time.localtime(snap.fetched_at or time.time())
         )
         if self.web_store is not None:
             self.web_store.update(snap)
+
+    def sync_cards(self) -> None:
+        """Re-render every card for the current terminal size.
+
+        Called when a row sees a resize. Each row ignores the call unless the
+        width actually changed, so the repeated calls one resize produces
+        (one per card) settle after the first.
+        """
+        width = self._card_width()
+        changed = False
+        for row in self.query(SnapshotRow):
+            if row.width_differs(width):
+                row.resize_to(width)
+                changed = True
+        if changed:
+            self._sync_grid_rows()
 
     def action_refresh(self) -> None:
         # Poller._run_round() ignores this if a round is already in flight, so

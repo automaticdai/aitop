@@ -3,7 +3,7 @@ from pathlib import Path
 
 from aitop.models import Quota
 from aitop.providers import codex as codex_module
-from aitop.providers.codex import _SEQ, _TOTAL_TIMEOUT, CodexProvider
+from aitop.providers.codex import _DIALOG_RESPONSES, _SEQ, _TOTAL_TIMEOUT, CodexProvider
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "codex_usage.txt").read_text()
 
@@ -22,6 +22,18 @@ def test_parse_real_status_screen():
     )
     assert snap.daily is None
     assert snap.raw == {"screen": FIXTURE}
+
+
+def test_parse_captures_client_info_version_banner():
+    # The header box carries the CLI version verbatim -- that's the
+    # single-line client info for the card.
+    snap = CodexProvider.parse(FIXTURE)
+    assert snap.client_info == "OpenAI Codex (v0.148.0)"
+
+
+def test_parse_client_info_none_when_no_banner():
+    snap = CodexProvider.parse("no rate limit data on this screen")
+    assert snap.client_info is None
 
 
 def test_parse_missing_windows_returns_none_not_raise():
@@ -48,50 +60,42 @@ def test_parse_reset_note_is_none_when_no_parenthetical_present():
 
 
 def test_fetch_never_raises_on_pty_failure(monkeypatch):
-    def boom(*args, **kwargs):
+    async def boom(*args, **kwargs):
         raise OSError("pty spawn failed")
 
-    monkeypatch.setattr(codex_module, "drive_screen", boom)
+    monkeypatch.setattr(codex_module, "drive_screen_async", boom)
     snap = asyncio.run(CodexProvider().fetch())
     assert snap.ok is False
     assert "pty spawn failed" in snap.error
 
 
-def test_fetch_offloads_blocking_call_to_a_thread(monkeypatch):
-    # drive_screen() is a blocking synchronous call; fetch() must not invoke
-    # it inline on the event loop (that would freeze the whole asyncio loop,
-    # including other providers and the Textual UI, for up to total_timeout
-    # on every poll -- asyncio.wait_for's own timeout can only preempt at an
-    # await boundary). Assert it runs on a different thread than fetch().
-    import threading
+def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch):
+    calls = []
 
-    caller_threads: list[int] = []
-
-    def fake_drive_screen(*args, **kwargs):
-        caller_threads.append(threading.get_ident())
+    async def fake_drive_screen(*args, **kwargs):
+        calls.append((args, kwargs))
+        await asyncio.sleep(0)
         return "fake screen"
 
-    monkeypatch.setattr(codex_module, "drive_screen", fake_drive_screen)
-    fetch_thread = threading.get_ident()
+    monkeypatch.setattr(codex_module, "drive_screen_async", fake_drive_screen)
     snap = asyncio.run(CodexProvider().fetch())
     assert snap.ok is True
-    assert len(caller_threads) == 1
-    assert caller_threads[0] != fetch_thread
+    assert len(calls) == 1
+    assert calls[0][1]["dialog_responses"] == _DIALOG_RESPONSES
+    assert calls[0][1]["done_patterns"]
 
 
-def test_seq_leads_with_defensive_dialog_skip():
+def test_update_dialog_is_conditional_not_a_blind_key_sequence():
     # codex-cli has previously shown an "Update available" dialog on startup
     # where a bare Enter triggers `npm install -g` and self-updates the
-    # global CLI. fetch() runs unattended on a recurring poll indefinitely,
-    # so the skip keystroke (down-arrow selects Skip, then Enter) must always
-    # be sent first, regardless of whether a dialog was observed locally.
-    assert _SEQ[0] == (2.0, "\x1b[B\r")
+    # global CLI. The skip keys must be tied to identifying dialog text rather
+    # than sent blindly into whatever happens to be on screen.
+    assert _SEQ[0] == (4.5, "/status\r")
+    assert _DIALOG_RESPONSES == [(('Update available', 'Skip'), "\x1b[B\r")]
 
 
 def test_total_timeout_leaves_margin_under_scheduler_default():
     # src/aitop/scheduler.py wraps fetch() in asyncio.wait_for(timeout=15.0)
-    # by default. drive_screen's own SIGKILL cleanup must fire comfortably
-    # before that, since asyncio.to_thread cannot interrupt an
-    # already-running thread on cancellation -- an orphaned PTY child would
-    # otherwise run out its full budget unsupervised.
+    # by default. Normal captures should finish inside that budget; scheduler
+    # cancellation separately terminates and reaps the helper and CLI child.
     assert _TOTAL_TIMEOUT < 15.0

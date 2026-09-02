@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..models import Quota, UsageSnapshot
-from .pty_driver import drive_screen
+from .pty_driver import DialogResponse, drive_screen_async
 
 # This session's own Claude Code CLI (and, per the design doc, potentially any
 # user's) may have ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL set
@@ -33,17 +32,13 @@ _CMD = [
     "claude",
 ]
 
-# Defensive dialog-skip always sent first: a fresh/untrusted workspace shows a
-# "Quick safety check: Is this a project you created or one you trust?" first-
-# run consent dialog with "1. Yes, I trust this folder" pre-selected, where a
-# bare Enter accepts it. Verified empirically in an already-trusted directory
-# that the same bare Enter on the (then-empty) compose prompt is a harmless
-# no-op -- it does not submit an empty message to the model (confirmed: the
-# subsequent /usage screen's "Session" panel still shows "Total cost: $0.0000"
-# / 0 turns). fetch() runs unattended on a recurring poll indefinitely and may
-# hit a not-yet-trusted workspace/config on some future machine, so this
-# keystroke is always sent regardless of whether a dialog was observed
-# locally -- same pattern as Codex's and Gemini's defensive skips.
+# drive_screen_async always launches in a private app-owned workspace, so
+# accepting this exact trust dialog cannot approve the user's repository or
+# load project-scoped configuration. The response is sent only after both
+# identifying strings are visible, never blindly into an unrelated prompt.
+_DIALOG_RESPONSES: list[DialogResponse] = [
+    (("Quick safety check", "Yes, I trust this folder"), "\r"),
+]
 #
 # `/usage` is the real slash command (confirmed via direct trial -- `/status`
 # shows only account/model/directory info, no quota data at all; `/cost`
@@ -55,13 +50,11 @@ _CMD = [
 # tests/fixtures/claude_usage.txt, a real capture). `/usage` is used as the
 # explicit, semantically-named command rather than relying on `/cost`'s
 # incidental overlap.
-_SEQ = [(2.0, "\r"), (4.5, "/usage\r")]
+_SEQ = [(4.5, "/usage\r")]
 
 # Kept comfortably under the scheduler's default per-provider timeout_s
-# (15.0s, src/aitop/scheduler.py) so drive_screen's own SIGKILL cleanup
-# fires before asyncio.wait_for would otherwise cancel the awaiting
-# coroutine and leave the PTY child to run out its full budget unsupervised
-# (asyncio.to_thread cannot interrupt an already-running thread on cancel).
+# (15.0s, src/aitop/scheduler.py); scheduler cancellation also terminates and
+# reaps the helper process and its PTY child.
 _TOTAL_TIMEOUT = 11.0
 
 # The `/usage` panel's content (Session summary + Current session/week bars +
@@ -88,16 +81,44 @@ _ROWS = 100
 # variant (e.g. a Max-plan "Current week (Opus)" row, not present on this
 # Pro-plan account and never observed here) can't be mismatched into this
 # provider's single weekly slot -- same "don't let an adjacent, differently-
-# scoped number leak in" discipline applied to Gemini's
-# model-group sections. The reset time (when present) is its own "Resets
-# ..." line directly below the bar -- captured verbatim, no timezone/date
-# parsing.
-_SESSION_RE = re.compile(
-    r"Current session\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used\s*\n\s*(Resets[^\n]*)?"
-)
-_WEEK_RE = re.compile(
-    r"Current week \(all models\)\s*\n[^\n]*?(\d+(?:\.\d+)?)%\s*used\s*\n\s*(Resets[^\n]*)?"
-)
+# scoped number leak in" discipline applied to Gemini's model-group sections.
+_SESSION_HEADER = "Current session"
+_WEEK_HEADER = "Current week (all models)"
+
+# Each window renders as its own block: the header, a bar line carrying
+# "NN% used", and then zero or more trailing lines -- a "Resets ..." line,
+# and sometimes an annotation line alongside it (the real capture in
+# tests/fixtures/claude_usage.txt carries "+50% weekly limits promo through
+# Aug 31 ..." under the weekly bar, and such lines come and go with whatever
+# campaign is running). Blocks are separated by a blank line.
+#
+# The percentage and the reset note are therefore looked up *within a
+# window's own block* rather than by adjacency to the bar line. Anchoring the
+# note on being the immediately-next line meant any interposed annotation
+# silently yielded reset_note=None while the percentage still parsed -- the
+# reset time appearing to "sometimes" go missing. Scoping to the block is the
+# same discipline as gemini.py's _section(), and it also stops a window whose
+# reset genuinely is absent from reaching forward and claiming the *next*
+# window's "Resets ..." line. The note itself is captured verbatim -- no
+# timezone/date parsing (see _reset_in for the session's own countdown).
+_PCT_USED_RE = re.compile(r"(\d+(?:\.\d+)?)%\s*used")
+_RESETS_RE = re.compile(r"Resets[^\n]*")
+_BLOCK_END_RE = re.compile(r"\n[ \t]*\n|\n[ \t]*Current ")
+# The welcome banner's title bar carries the CLI version verbatim ("Claude
+# Code v2.1.237") -- the single-line client info for the card. The banner is
+# drawn once at spawn and stays in the 100-row scrollback, so it's reliably
+# present even after the /usage panel scrolls over it.
+_CLIENT_INFO_RE = re.compile(r"Claude Code v\d+(?:\.\d+)+")
+
+# Both windows must be on screen before the capture ends (done_all=True).
+# With any-of semantics the capture could stop a settle-interval after the
+# *session* bar painted, while the week block -- or either block's trailing
+# "Resets ..." line -- was still to come. Requiring both costs nothing (the
+# panel paints both bars together) and removes that race entirely.
+_DONE_PATTERNS = [
+    re.escape(_SESSION_HEADER) + r"[\s\S]{0,200}?\d+(?:\.\d+)?%\s*used",
+    re.escape(_WEEK_HEADER) + r"[\s\S]{0,200}?\d+(?:\.\d+)?%\s*used",
+]
 
 
 class ClaudeProvider:
@@ -105,18 +126,14 @@ class ClaudeProvider:
 
     async def fetch(self) -> UsageSnapshot:
         try:
-            # drive_screen() is a blocking, synchronous call (pty.fork,
-            # select loop, os.read/os.write) with no internal await points --
-            # running it inline here would freeze the whole asyncio event
-            # loop (all providers, the Textual UI) for up to total_timeout
-            # on every poll. Offload it to a worker thread instead.
-            text = await asyncio.to_thread(
-                drive_screen,
+            text = await drive_screen_async(
                 _CMD,
                 _SEQ,
                 rows=_ROWS,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_when=_screen_has_quota,
+                done_patterns=_DONE_PATTERNS,
+                done_all=True,
+                dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -124,30 +141,17 @@ class ClaudeProvider:
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
-        daily = _quota_from_pct_used(text, _SESSION_RE, session=True)
-        weekly = _quota_from_pct_used(text, _WEEK_RE)
+        daily = _quota_from_block(text, _SESSION_HEADER, session=True)
+        weekly = _quota_from_block(text, _WEEK_HEADER)
+        version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "claude",
             ok=True,
             daily=daily,
             weekly=weekly,
+            client_info=version.group(0) if version else None,
             raw={"screen": text},
         )
-
-
-def _screen_has_quota(text: str) -> bool:
-    """True once the /usage panel's session/week bars are on screen.
-
-    Handed to drive_screen as its early-exit predicate: the capture is done
-    the moment the exact rows parse() reads are rendered, so a poll (and a
-    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
-    screen that already has everything. Deliberately the same regexes parse()
-    uses, so "done" can never mean less than "parseable"; drive_screen still
-    reads for a further settle window after this first fires, so the second
-    bar painted a frame later is not missed.
-    """
-    return bool(_SESSION_RE.search(text) or _WEEK_RE.search(text))
-
 
 # Claude's "Current session" reset is a wall-clock time-of-day with a
 # timezone ("Resets 11pm (Europe/London)"); a countdown until that reset is
@@ -187,14 +191,33 @@ def _reset_in(text: str, now: datetime | None = None) -> str | None:
     return f"Reset in {hours}h {minutes}m"
 
 
-def _quota_from_pct_used(
-    text: str, pattern: re.Pattern[str], session: bool = False
-) -> Quota | None:
-    m = pattern.search(text)
+def _block(text: str, header: str) -> str:
+    """The lines belonging to one window, from `header` to the block's end.
+
+    Returns "" when the header isn't on screen (format changed, truncated
+    capture, or -- for the weekly header -- an account that only renders a
+    differently-scoped per-model row). An empty block makes the searches
+    below find nothing, which correctly yields None rather than a fabricated
+    number: the same fail-closed contract as every other adapter.
+    """
+    start = text.find(header)
+    if start == -1:
+        return ""
+    rest = text[start + len(header) :]
+    end = _BLOCK_END_RE.search(rest)
+    return rest[: end.start()] if end else rest
+
+
+def _quota_from_block(text: str, header: str, session: bool = False) -> Quota | None:
+    block = _block(text, header)
+    if not block:
+        return None
+    m = _PCT_USED_RE.search(block)
     if not m:
         return None
     pct_used = float(m.group(1))
-    reset_note = m.group(2) or None
+    reset = _RESETS_RE.search(block)
+    reset_note = reset.group(0) if reset else None
     if session and reset_note is not None:
         reset_note = _reset_in(reset_note) or reset_note
     return Quota(used=pct_used, limit=100.0, unit="%", reset_note=reset_note)

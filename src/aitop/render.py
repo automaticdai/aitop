@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from textual.markup import escape
 
 from .models import Quota, QuotaGroup, UsageSnapshot
@@ -8,6 +10,21 @@ from .models import Quota, QuotaGroup, UsageSnapshot
 # 70-90%, red above 90% (of the quota *used*).
 AMBER_PCT = 70.0
 RED_PCT = 90.0
+
+# Bar width for a normal, full-width quota line, and the narrowest a bar is
+# allowed to shrink to before it stops conveying anything. A quota line is
+# "<label:8><bar> <value>", so in a card narrower than 8 + BAR_WIDTH + 1 +
+# len(value) the line would wrap -- pushing the value onto its own line and
+# making the card twice as tall as it measures. The bar is sized to whatever
+# is actually available instead; see _fit_bar.
+BAR_WIDTH = 24
+MIN_BAR_WIDTH = 6
+LABEL_WIDTH = 8
+# Providers reporting more than one quota pool (Antigravity's Gemini and
+# Claude & GPT-OSS groups) stack them by default, which makes that card twice
+# as tall as any other. When the card is wide enough the groups are laid out
+# as columns instead, each column's bar sized to its own share of the width.
+GROUP_GUTTER = 2
 
 # Spec §6 status dot: green = ok, amber = nothing usable came back, red =
 # error (including a stale row still showing its last good numbers, per §7).
@@ -74,6 +91,18 @@ LOGOS = {
     "deepseek": f"[#4D6BFE]{_text_art('DEEPSEEK')}[/]",  # DeepSeek blue
 }
 
+# Drawn width of each wordmark: 4 columns per glyph plus a separating space
+# between them. A logo wider than its card wraps every one of its five rows
+# onto two, which both mangles the wordmark and doubles the card's height --
+# and because the caller counts *logical* lines to size the card, a wrapped
+# logo silently makes that count wrong. Too narrow to draw means don't draw.
+LOGO_WIDTH = {
+    "claude": 5 * len("ANTHROPIC") - 1,
+    "codex": 5 * len("OPENAI") - 1,
+    "gemini": 5 * len("GOOGLE") - 1,
+    "deepseek": 5 * len("DEEPSEEK") - 1,
+}
+
 
 def fmt_pct(pct: float | None) -> str:
     return "—" if pct is None else f"{pct:.1f}%"
@@ -86,7 +115,7 @@ def bar_pct(pct: float | None) -> float:
     return max(0.0, min(100.0, pct))
 
 
-def render_bar(pct: float | None, width: int = 24) -> str:
+def render_bar(pct: float | None, width: int = BAR_WIDTH) -> str:
     if pct is None:
         return "?" * width
     filled = round(bar_pct(pct) / 100 * width)
@@ -132,14 +161,44 @@ def format_quota_value(q: Quota) -> str:
     return f"{q.used:.0f}/{q.limit:.0f} {q.unit} ({fmt_pct(q.pct)})"
 
 
-def _quota_line(label: str, q: Quota) -> list[str]:
+def _fit_bar(width: int | None, value: str) -> int:
+    """Widest bar keeping "<label><bar> <value>" inside `width`.
+
+    Never returns more than BAR_WIDTH (a wider card doesn't need a longer
+    bar) nor less than MIN_BAR_WIDTH -- below that the bar is noise, and
+    letting the line wrap instead would be worse than overflowing by a cell.
+    """
+    if width is None:
+        return BAR_WIDTH
+    return max(MIN_BAR_WIDTH, min(BAR_WIDTH, width - LABEL_WIDTH - 1 - len(value)))
+
+
+def _quota_cell(label: str, q: Quota, width: int | None = None) -> list[tuple[str, int]]:
+    """One quota's lines as (markup, visible width) pairs.
+
+    The visible width is computed from the *unstyled* text because the markup
+    string carries Textual tags (and backslash escapes) that len() would
+    count but the terminal never draws -- so len(markup) is useless for the
+    column padding in _columns().
+    """
     color = bar_color(q.pct)
-    bar = render_bar(q.pct)
-    value = escape(format_quota_value(q))
-    lines = [f"{label:<8}[{color}]{bar}[/{color}] {value}"]
+    value = format_quota_value(q)
+    bar = render_bar(q.pct, _fit_bar(width, value))
+    head = f"{label:<{LABEL_WIDTH}}{bar} {value}"
+    lines = [(f"{label:<{LABEL_WIDTH}}[{color}]{bar}[/{color}] {escape(value)}", len(head))]
     if q.reset_note:
-        lines.append(f"        {escape(q.reset_note)}")
+        # Normally hung under the bar, but a vendor's own wording can be long
+        # ("Resets Aug 25, 5am (Europe/London)") and unlike the bar it can't
+        # be shrunk -- so on a narrow card the note gives up its indent rather
+        # than wrapping onto a second line.
+        note = q.reset_note
+        indent = LABEL_WIDTH if width is None else max(0, min(LABEL_WIDTH, width - len(note)))
+        lines.append((f"{'':<{indent}}{escape(note)}", indent + len(note)))
     return lines
+
+
+def _quota_line(label: str, q: Quota, width: int | None = None) -> list[str]:
+    return [markup for markup, _ in _quota_cell(label, q, width)]
 
 
 def daily_label(provider: str) -> str:
@@ -147,58 +206,172 @@ def daily_label(provider: str) -> str:
 
     Claude Code's "daily" is actually its "Current session" -- a rolling
     session window that resets mid-session, not a calendar day -- so it reads
-    "session" there. Every other provider keeps the plain "daily".
+    "session" there. Codex's is its own CLI's "5h limit:" row (see
+    providers/codex.py's _DAILY_RE) -- a rolling 5-hour window, not a
+    calendar day either -- so it reads "5h". Every other provider keeps the
+    plain "daily".
     """
-    return "session" if provider == "claude" else "daily"
+    if provider == "claude":
+        return "session"
+    if provider == "codex":
+        return "5h"
+    return "daily"
 
 
-def _group_lines(group: QuotaGroup) -> list[str]:
-    lines = [escape(group.label)]
+def _group_cell(group: QuotaGroup, width: int | None = None) -> list[tuple[str, int]]:
+    # Dimmed: the label names the pool, the bars under it carry the actual
+    # reading, so it should recede rather than compete with them. The visible
+    # width is unchanged -- markup isn't drawn.
+    lines = [(f"[dim]{escape(group.label)}[/dim]", len(group.label))]
     if group.daily is not None:
-        lines.extend(_quota_line("daily", group.daily))
+        lines.extend(_quota_cell("daily", group.daily, width))
     if group.weekly is not None:
-        lines.extend(_quota_line("weekly", group.weekly))
+        if group.daily is not None:
+            lines.append(("", 0))
+        lines.extend(_quota_cell("weekly", group.weekly, width))
     return lines
 
 
-def _value_lines(snap: UsageSnapshot) -> list[str]:
+def _cells_width(cells: list[list[tuple[str, int]]], gutter: int = GROUP_GUTTER) -> int:
+    """Total visible width of `cells` laid out as columns."""
+    widths = [max((w for _, w in cell), default=0) for cell in cells]
+    return sum(widths) + gutter * (len(cells) - 1)
+
+
+def _columns(cells: list[list[tuple[str, int]]], gutter: int = GROUP_GUTTER) -> list[str]:
+    """Lay cells out side by side, padding each to its own widest line.
+
+    Cells of unequal height are padded with blanks, so a group with only a
+    weekly bar still lines up against one carrying both windows.
+    """
+    widths = [max((w for _, w in cell), default=0) for cell in cells]
+    height = max((len(cell) for cell in cells), default=0)
+    rows = []
+    for r in range(height):
+        row = ""
+        for i, cell in enumerate(cells):
+            markup, visible = cell[r] if r < len(cell) else ("", 0)
+            row += markup
+            if i < len(cells) - 1:
+                row += " " * (widths[i] - visible + gutter)
+        # Trailing padding on the last populated column is invisible but would
+        # widen the widget's measured content, so drop it.
+        rows.append(row.rstrip())
+    return rows
+
+
+def _group_lines(groups: list[QuotaGroup], width: int | None = None) -> list[str]:
+    """Groups side by side when `width` says they fit, stacked otherwise.
+
+    `width` is the content width available to the card, or None when that
+    isn't known (any caller that hasn't opted in). None means "don't risk
+    clipping" and takes the stacked layout, so the side-by-side form only
+    ever appears where it has been measured to fit.
+    """
+    if not groups:
+        return []
+    if len(groups) > 1 and width is not None:
+        column = (width - GROUP_GUTTER * (len(groups) - 1)) // len(groups)
+        cells = [_group_cell(g, column) for g in groups]
+        # A reset note can't be shrunk the way a bar can, so a column may
+        # still come out wider than its share -- fall through to stacked
+        # rather than overflow the card.
+        if _cells_width(cells) <= width:
+            return _columns(cells)
+    lines: list[str] = []
+    for i, group in enumerate(groups):
+        if i > 0:
+            lines.append("")
+        lines.extend(markup for markup, _ in _group_cell(group, width))
+    return lines
+
+
+def _client_info_line(snap: UsageSnapshot) -> str:
+    """The dim single-line client info, or "" when the snapshot has none.
+
+    Placed at the very top of the card body, directly under the logo, where it
+    reads as the card's caption rather than another data row.
+    """
+    if not snap.client_info:
+        return ""
+    return f"[dim]{escape(snap.client_info)}[/dim]"
+
+
+def _value_lines(snap: UsageSnapshot, width: int | None = None) -> list[str]:
     lines = []
     if snap.daily is not None:
-        lines.extend(_quota_line(daily_label(snap.provider), snap.daily))
+        lines.extend(_quota_line(daily_label(snap.provider), snap.daily, width))
     if snap.weekly is not None:
-        lines.extend(_quota_line("weekly", snap.weekly))
+        lines.extend(_quota_line("weekly", snap.weekly, width))
     if snap.balance is not None:
         b = snap.balance
         lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")
         if not b.available:
             lines.append("         [red]insufficient for API calls[/red]")
-    for i, group in enumerate(snap.groups or []):
-        if i > 0:
-            lines.append("")
-        lines.extend(_group_lines(group))
+    lines.extend(_group_lines(snap.groups or [], width))
     return lines
 
 
-def _with_logo(provider: str, body: str) -> str:
+def _with_logo(provider: str, body: str, width: int | None = None) -> str:
     logo = LOGOS.get(provider)
-    return f"{logo}\n\n{body}" if logo else body
+    if logo is None:
+        return body
+    if width is not None and LOGO_WIDTH.get(provider, 0) > width:
+        return body
+    return f"{logo}\n\n{body}"
 
 
-def render_snapshot(snap: UsageSnapshot) -> str:
+_MARKUP_RE = re.compile(r"\[/?[^\]]*\]")
+
+
+def visual_height(text: str, width: int | None) -> int:
+    """Rows `text` occupies once markup is dropped and long lines wrap.
+
+    The caller sizes a card from this, so it has to agree with what the
+    terminal will actually draw: counting "\\n"s alone undercounts whenever a
+    line is wider than the card (a long reset note), and the card then clips
+    its own last line.
+    """
+    lines = text.splitlines() or [""]
+    if not width or width <= 0:
+        return len(lines)
+    return sum(max(1, -(-len(_MARKUP_RE.sub("", line)) // width)) for line in lines)
+
+
+def render_loading(provider: str, width: int | None = None) -> str:
+    """Placeholder shown before a provider's first snapshot arrives."""
+    return _with_logo(provider, "loading…", width)
+
+
+def render_snapshot(snap: UsageSnapshot, width: int | None = None) -> str:
     if not snap.ok:
-        return _with_logo(snap.provider, f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}")
-    lines = _value_lines(snap)
+        return _with_logo(
+            snap.provider,
+            f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}",
+            width,
+        )
+    lines = _value_lines(snap, width)
     if not lines:
         # ok=True with nothing parsed is the most likely real-world PTY
         # failure (expired CLI session, vendor UI change, capture truncated
         # by the timeout). The adapters deliberately return None rather than
         # fabricate a number and deliberately leave ok=True, so the diagnostic
         # has to be added here, at the rendering layer.
-        return _with_logo(snap.provider, f"{_dot('yellow')} no data (check the CLI's login state)")
-    return _with_logo(snap.provider, "\n".join([_dot('green'), *lines]))
+        return _with_logo(
+            snap.provider, f"{_dot('yellow')} no data (check the CLI's login state)", width
+        )
+    body = [_dot('green'), *lines]
+    if snap.client_info:
+        # The client line sits above the status dot, separated by a blank
+        # line the same way the logo separates itself from the body.
+        body = [_client_info_line(snap), "", *body]
+    return _with_logo(snap.provider, "\n".join(body), width)
 
 
-def render_stale(last_good: UsageSnapshot, error: str | None) -> str:
+def render_stale(last_good: UsageSnapshot, error: str | None, width: int | None = None) -> str:
     """Spec §7: a failed fetch keeps showing the last good value, marked stale."""
     header = f"{_dot('red')} [dim](stale — {escape(error or 'fetch failed')})[/dim]"
-    return _with_logo(last_good.provider, "\n".join([header, *_value_lines(last_good)]))
+    body = [header, *_value_lines(last_good, width)]
+    if last_good.client_info:
+        body = [_client_info_line(last_good), "", *body]
+    return _with_logo(last_good.provider, "\n".join(body), width)

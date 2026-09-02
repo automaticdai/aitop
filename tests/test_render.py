@@ -1,3 +1,5 @@
+import re
+
 from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
 from aitop.render import (
     DISPLAY_NAME,
@@ -53,6 +55,43 @@ def test_render_snapshot_prepends_the_provider_logo():
     snap = UsageSnapshot("claude", daily=Quota(12, 50, "messages"))
     out = render_snapshot(snap)
     assert out.startswith(LOGOS["claude"] + "\n\n")
+
+
+def test_render_snapshot_shows_client_info_under_logo():
+    snap = UsageSnapshot(
+        "claude",
+        daily=Quota(25, 100, "%"),
+        client_info="Claude Code v2.1.237",
+    )
+    out = render_snapshot(snap)
+    assert out.startswith(LOGOS["claude"] + "\n\n")
+    lines = out.splitlines()
+    # logo (5 rows) + blank, then the dim client-info line, a blank, and the
+    # status dot before the quota data -- "under the logo at top".
+    assert lines[6] == "[dim]Claude Code v2.1.237[/dim]"
+    assert lines[7] == ""
+    assert lines[8] == "[green]●[/green]"
+
+
+def test_render_snapshot_omits_client_info_when_absent():
+    snap = UsageSnapshot("claude", daily=Quota(25, 100, "%"))
+    out = render_snapshot(snap)
+    assert out.splitlines()[6] == "[green]●[/green]"
+
+
+def test_render_stale_keeps_client_info_under_logo():
+    last_good = UsageSnapshot(
+        "codex",
+        daily=Quota(12, 50, "messages"),
+        client_info="OpenAI Codex (v0.148.0)",
+    )
+    out = render_stale(last_good, "pty timed out")
+    lines = out.splitlines()
+    # stale cards have no green status dot, so client info sits directly above
+    # the stale header.
+    assert lines[6] == "[dim]OpenAI Codex (v0.148.0)[/dim]"
+    assert lines[7] == ""
+    assert "stale" in lines[8]
 
 
 def test_render_snapshot_unknown_provider_has_no_logo():
@@ -194,11 +233,108 @@ def test_render_snapshot_groups_have_a_blank_line_between_them():
             QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%")),
         ],
     )
-    lines = render_snapshot(snap).splitlines()
+    lines = [_visible(line) for line in render_snapshot(snap).splitlines()]
     assert "" in lines
     blank_idx = lines.index("")
     assert lines[blank_idx - 1].startswith("weekly")
     assert lines[blank_idx + 1] == "Claude & GPT-OSS"
+
+
+def _visible(line: str) -> str:
+    """Strip Textual markup tags, leaving what the terminal actually draws."""
+    return re.sub(r"\[/?[^\]]*\]", "", line)
+
+
+def _two_groups() -> UsageSnapshot:
+    return UsageSnapshot(
+        "gemini",
+        groups=[
+            QuotaGroup(
+                label="Gemini",
+                daily=Quota(0, 100, "%"),
+                weekly=Quota(6, 100, "%", reset_note="Refreshes in 97h 24m"),
+            ),
+            QuotaGroup(
+                label="Claude & GPT-OSS",
+                daily=Quota(0, 100, "%"),
+                weekly=Quota(35, 100, "%", reset_note="Refreshes in 97h 25m"),
+            ),
+        ],
+    )
+
+
+def test_groups_render_side_by_side_when_the_width_allows():
+    # Antigravity reports two pools sharing one account; stacking them makes
+    # that card twice as tall as every other one. Given room, they lay out as
+    # columns instead -- both labels land on a single line.
+    out = render_snapshot(_two_groups(), width=80)
+    lines = [_visible(line) for line in out.splitlines()]
+    header = next(line for line in lines if "Gemini" in line)
+    assert "Claude & GPT-OSS" in header
+    assert sum(1 for line in lines if line.strip().startswith("weekly")) == 1
+
+
+def test_groups_fall_back_to_stacked_when_too_narrow():
+    out = render_snapshot(_two_groups(), width=40)
+    lines = [_visible(line) for line in out.splitlines()]
+    header = next(line for line in lines if "Gemini" in line)
+    assert "Claude & GPT-OSS" not in header
+    assert sum(1 for line in lines if line.strip().startswith("weekly")) == 2
+
+
+def test_groups_stack_when_width_is_unknown():
+    # None means "no width information" -- take the layout that cannot clip
+    # rather than optimistically assuming the card is wide.
+    out = render_snapshot(_two_groups())
+    header = next(line for line in _visible(out).splitlines() if "Gemini" in line)
+    assert "Claude & GPT-OSS" not in header
+
+
+def test_side_by_side_columns_align_on_visible_width_not_markup_length():
+    # Regression guard: the bar carries Textual color tags, so padding the
+    # columns with len(markup) would push each row's second column out by the
+    # tag length and leave the block visibly ragged.
+    out = render_snapshot(_two_groups(), width=80)
+    lines = [_visible(line) for line in out.splitlines()]
+    starts = {
+        line.index("Claude & GPT-OSS") for line in lines if "Claude & GPT-OSS" in line
+    }
+    starts |= {line.rindex("daily") for line in lines if line.count("daily") == 2}
+    starts |= {line.rindex("weekly") for line in lines if line.count("weekly") == 2}
+    # The reset note is indented 8 inside its own cell, so back that out to
+    # compare column starts rather than word starts.
+    starts |= {
+        line.rindex("Refreshes") - 8 for line in lines if line.count("Refreshes") == 2
+    }
+    assert len(starts) == 1, f"second column starts at differing offsets: {starts}"
+
+
+def test_group_labels_are_dimmed_without_affecting_column_alignment():
+    # The dim tags are markup, not drawn characters -- if they were counted as
+    # width the label column would pad short by their length.
+    out = render_snapshot(_two_groups(), width=80)
+    assert "[dim]Gemini[/dim]" in out
+    assert "[dim]Claude & GPT-OSS[/dim]" in out
+    lines = [_visible(line) for line in out.splitlines()]
+    header = next(line for line in lines if "Gemini" in line)
+    daily = next(line for line in lines if line.count("daily") == 2)
+    assert header.index("Claude & GPT-OSS") == daily.rindex("daily")
+
+
+def test_single_group_is_not_laid_out_as_columns():
+    snap = UsageSnapshot(
+        "gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(6, 100, "%"))]
+    )
+    out = render_snapshot(snap, width=200)
+    # A lone group keeps the normal full-width bar rather than the narrow one
+    # reserved for columns.
+    assert render_bar(6.0) in out
+
+
+def test_render_stale_accepts_a_width():
+    out = render_stale(_two_groups(), "pty timed out", width=80)
+    header = next(line for line in _visible(out).splitlines() if "Gemini" in line)
+    assert "Claude & GPT-OSS" in header
 
 
 def test_render_stale_keeps_last_good_values():
@@ -256,14 +392,25 @@ def test_claude_daily_window_is_labeled_session():
     assert not any(line.startswith("daily") for line in lines)
 
 
-def test_other_providers_keep_the_daily_label():
+def test_codex_daily_window_is_labeled_5h():
+    # Codex's "daily" window is actually its rolling 5-hour rate limit (the
+    # CLI's own "5h limit:" row, see providers/codex.py's _DAILY_RE) rather
+    # than a calendar day, so it reads "5h" like Claude's "session" special
+    # case, not the generic "daily".
     snap = UsageSnapshot("codex", daily=Quota(12, 50, "messages"))
+    lines = render_snapshot(snap).splitlines()
+    assert any(line.startswith("5h") for line in lines)
+    assert not any(line.startswith("daily") for line in lines)
+
+
+def test_other_providers_keep_the_daily_label():
+    snap = UsageSnapshot("gemini", daily=Quota(12, 50, "messages"))
     lines = render_snapshot(snap).splitlines()
     assert any(line.startswith("daily") for line in lines)
     assert not any(line.startswith("session") for line in lines)
 
 
-def test_render_snapshot_group_orders_daily_before_weekly():
+def test_render_snapshot_group_separates_daily_and_weekly():
     snap = UsageSnapshot(
         "gemini",
         groups=[QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%"))],
@@ -271,4 +418,5 @@ def test_render_snapshot_group_orders_daily_before_weekly():
     lines = render_snapshot(snap).splitlines()
     daily_idx = next(i for i, line in enumerate(lines) if line.startswith("daily"))
     weekly_idx = next(i for i, line in enumerate(lines) if line.startswith("weekly"))
-    assert daily_idx < weekly_idx
+    assert weekly_idx == daily_idx + 2
+    assert lines[daily_idx + 1] == ""

@@ -1,8 +1,11 @@
+import asyncio
 import os
-import threading
 import time
+from pathlib import Path
 
-from aitop.providers.pty_driver import drive_screen, drive_screen_steps, request_stop
+import pytest
+
+from aitop.providers.pty_driver import drive_screen, drive_screen_async, drive_screen_steps
 
 
 def test_exec_failure_terminates_child_immediately_not_via_timeout():
@@ -45,7 +48,7 @@ def test_does_not_leak_the_pty_master_fd():
 def test_done_when_returns_early_instead_of_burning_the_full_timeout():
     # Without an early-exit condition every PTY fetch runs its whole budget
     # (~11s in the adapters), which is also how long quitting the app could
-    # stall waiting on the worker thread.
+    # stall waiting on the helper process.
     start = time.monotonic()
     out = drive_screen(
         ["bash", "-c", "printf READY; sleep 30"],
@@ -77,7 +80,7 @@ def test_done_when_waits_for_the_settle_window_before_returning():
 
 
 def test_without_done_when_the_full_timeout_is_still_honoured():
-    # Existing adapters rely on drive_screen running its whole budget when no
+    # The helper relies on drive_screen running its whole budget when no
     # predicate is supplied; the early-exit path must be strictly opt-in.
     start = time.monotonic()
     drive_screen(["bash", "-c", "printf READY; sleep 30"], [], total_timeout=1.5)
@@ -98,11 +101,8 @@ def test_broken_done_when_predicate_does_not_break_the_capture():
 
 
 def test_drive_screen_steps_returns_one_screen_per_keystroke():
-    # Used by the Codex adapter to read two successive screens (/status then
-    # /usage) from a single PTY session instead of spawning a fresh CLI per
-    # screen. The core contract is: one (keys, screen) pair per keystroke, in
-    # order, and the keys are preserved verbatim so the caller can find a
-    # specific step.
+    # The core contract is one (keys, screen) pair per keystroke, in order,
+    # with keys preserved verbatim so a caller can identify a specific step.
     steps = drive_screen_steps(
         ["bash", "-c", "sleep 5"],
         [(0.1, "a"), (0.2, "b"), (0.3, "c")],
@@ -113,23 +113,108 @@ def test_drive_screen_steps_returns_one_screen_per_keystroke():
     assert all(isinstance(screen, str) for _, screen in steps)
 
 
-def test_request_stop_aborts_an_in_flight_capture():
-    # drive_screen runs in an asyncio.to_thread worker thread that can't be
-    # cancelled; the only way to cut one short on quit is the stop latch. This
-    # is the "quit leaves threads/CLIs running" bug: without the latch the
-    # capture (and its child CLI) runs out the whole 10s budget while the
-    # interpreter waits for the executor to drain.
-    result: dict[str, float] = {}
+def test_async_capture_uses_a_private_app_workspace(monkeypatch, tmp_path):
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
 
-    def run() -> None:
-        result["start"] = time.monotonic()
-        drive_screen(["bash", "-c", "sleep 30"], [], total_timeout=10.0)
-        result["end"] = time.monotonic()
+    async def scenario() -> str:
+        return await drive_screen_async(["pwd"], [], total_timeout=2.0)
 
-    t = threading.Thread(target=run)
-    t.start()
-    time.sleep(1.0)  # let the capture start and its loop enter select()
-    request_stop()
-    t.join(timeout=3.0)
-    assert not t.is_alive(), "capture did not abort after request_stop()"
-    assert result["end"] - result["start"] < 5.0
+    text = asyncio.run(scenario())
+    workspace = cache / "aitop" / "provider-workspace"
+    assert str(workspace) in text
+    assert workspace != Path.cwd()
+    assert workspace.exists()
+    assert workspace.stat().st_mode & 0o777 == 0o700
+
+
+def test_dialog_response_is_sent_only_after_identifying_text_is_visible(tmp_path):
+    command = [
+        "bash",
+        "-c",
+        'printf "Quick safety check\\nYes, I trust this folder\\n"; '
+        'IFS= read -r answer; printf "ACCEPTED"; sleep 30',
+    ]
+
+    async def scenario(workspace: Path) -> str:
+        return await drive_screen_async(
+            command,
+            [],
+            total_timeout=5.0,
+            done_patterns=["ACCEPTED"],
+            settle_s=0.2,
+            dialog_responses=[
+                (("Quick safety check", "Yes, I trust this folder"), "\r")
+            ],
+            cwd=workspace,
+        )
+
+    workspace = tmp_path / "provider-workspace"
+    workspace.mkdir()
+    assert "ACCEPTED" in asyncio.run(scenario(workspace))
+
+
+def test_dialog_response_is_not_sent_to_an_unrecognized_screen(tmp_path):
+    workspace = tmp_path / "provider-workspace"
+    workspace.mkdir()
+
+    async def scenario() -> str:
+        return await drive_screen_async(
+            [
+                "bash",
+                "-c",
+                'printf "Unrelated login prompt\\n"; '
+                'if IFS= read -r -t 0.5 answer; then printf "UNSAFE"; '
+                'else printf "UNTOUCHED"; fi; sleep 30',
+            ],
+            [],
+            total_timeout=5.0,
+            done_patterns=["UNSAFE|UNTOUCHED"],
+            settle_s=0.2,
+            dialog_responses=[
+                (("Quick safety check", "Yes, I trust this folder"), "\r")
+            ],
+            cwd=workspace,
+        )
+
+    text = asyncio.run(scenario())
+    assert "UNTOUCHED" in text
+    assert "UNSAFE" not in text
+
+
+def test_cancelling_async_capture_reaps_its_cli_child(tmp_path):
+    pid_file = tmp_path / "cli.pid"
+
+    async def scenario() -> tuple[int, float]:
+        workspace = tmp_path / "provider-workspace"
+        workspace.mkdir()
+        task = asyncio.create_task(
+            drive_screen_async(
+                [
+                    "bash",
+                    "-c",
+                    'printf "%s" "$$" > "$1"; sleep 30',
+                    "bash",
+                    str(pid_file),
+                ],
+                [],
+                total_timeout=20.0,
+                cwd=workspace,
+            )
+        )
+        for _ in range(100):
+            if pid_file.exists():
+                break
+            await asyncio.sleep(0.02)
+        assert pid_file.exists()
+        pid = int(pid_file.read_text())
+        start = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return pid, time.monotonic() - start
+
+    pid, elapsed = asyncio.run(scenario())
+    assert elapsed < 3.0
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

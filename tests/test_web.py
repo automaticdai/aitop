@@ -50,6 +50,19 @@ def test_snapshot_to_dict_empty_snapshot_has_null_fields():
     assert d["weekly"] is None
     assert d["balance"] is None
     assert d["groups"] == []
+    assert d["client_info"] is None
+
+
+def test_snapshot_to_dict_includes_client_info():
+    snap = UsageSnapshot(
+        "claude", daily=Quota(25, 100, "%"), client_info="Claude Code v2.1.237"
+    )
+    assert snapshot_to_dict(snap)["client_info"] == "Claude Code v2.1.237"
+
+
+def test_index_js_renders_client_info():
+    assert "s.client_info" in INDEX_HTML
+    assert "client-info" in INDEX_HTML
 
 
 def test_snapshot_to_dict_serializes_balance_and_groups():
@@ -202,4 +215,5 @@ def test_index_js_is_a_thin_template_over_server_computed_fields():
 
 def test_snapshot_to_dict_claude_daily_label():
     assert snapshot_to_dict(UsageSnapshot("claude"))["daily_label"] == "session"
-    assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "daily"
+    assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "5h"
+    assert snapshot_to_dict(UsageSnapshot("gemini"))["daily_label"] == "daily"

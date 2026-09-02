@@ -1,32 +1,26 @@
 from __future__ import annotations
 
-import asyncio
 import re
 
 from ..models import Quota, UsageSnapshot
-from .pty_driver import drive_screen
+from .pty_driver import DialogResponse, drive_screen_async
 
-# Defensive dialog-skip (Skip = down-arrow + Enter) always sent first: this
-# CLI has previously shown an "Update available" dialog on startup where a
-# bare Enter triggers `npm install -g` and self-updates the global install.
-# No dialog was observed in this environment's install (v0.148.0), but
-# fetch() runs unattended on a recurring poll indefinitely, on whatever
-# machine/version this deploys to -- so the skip keystroke is always sent
-# regardless. If no dialog is showing it lands harmlessly in the empty
-# "Ask Codex to do anything" prompt box (down-arrow is a no-op there, Enter
-# on empty input submits nothing).
+# The update dialog defaults to installing a global update. Select Skip only
+# after both identifying strings are visible; never send dialog keys blindly
+# into an unexpected prompt.
+_DIALOG_RESPONSES: list[DialogResponse] = [
+    (("Update available", "Skip"), "\x1b[B\r"),
+]
 #
 # NOTE: `/usage` renders a token-activity heatmap (Lifetime/Peak/Streak), not
 # daily/weekly quota percentages -- `/status` is the screen that renders
 # "<Label> limit: [bar] NN% left (resets ...)" rows, so that is what we drive
 # here (see tests/fixtures/codex_usage.txt, a real capture).
-_SEQ = [(2.0, "\x1b[B\r"), (4.5, "/status\r"), (9.0, "/quit\r")]
+_SEQ = [(4.5, "/status\r"), (9.0, "/quit\r")]
 
 # Kept comfortably under the scheduler's default per-provider timeout_s
-# (15.0s, src/aitop/scheduler.py) so drive_screen's own SIGKILL cleanup
-# fires before asyncio.wait_for would otherwise cancel the awaiting
-# coroutine and leave the PTY child to run out its full budget unsupervised
-# (asyncio.to_thread cannot interrupt an already-running thread on cancel).
+# (15.0s, src/aitop/scheduler.py); scheduler cancellation also terminates and
+# reaps the helper process and its PTY child.
 _TOTAL_TIMEOUT = 11.0
 
 # "<label> limit:" rows only appear for windows the account actually has
@@ -38,6 +32,10 @@ _TOTAL_TIMEOUT = 11.0
 # on 27 Aug)" -- captured verbatim, no timezone/date parsing.
 _WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 _DAILY_RE = re.compile(r"(?:5h|Daily) limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
+# The header box of both the welcome screen and the /status panel carries the
+# CLI version verbatim ("OpenAI Codex (v0.148.0)") -- the single-line client
+# info for the card.
+_CLIENT_INFO_RE = re.compile(r"OpenAI Codex \(v[\d.]+\)")
 
 
 class CodexProvider:
@@ -45,17 +43,12 @@ class CodexProvider:
 
     async def fetch(self) -> UsageSnapshot:
         try:
-            # drive_screen() is a blocking, synchronous call (pty.fork,
-            # select loop, os.read/os.write) with no internal await points --
-            # running it inline here would freeze the whole asyncio event
-            # loop (all providers, the Textual UI) for up to total_timeout
-            # on every poll. Offload it to a worker thread instead.
-            text = await asyncio.to_thread(
-                drive_screen,
+            text = await drive_screen_async(
                 ["codex"],
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_when=_screen_has_quota,
+                done_patterns=[_DAILY_RE.pattern, _WEEKLY_RE.pattern],
+                dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
         except Exception as exc:  # noqa: BLE001
@@ -65,28 +58,15 @@ class CodexProvider:
     def parse(text: str) -> UsageSnapshot:
         daily = _quota_from_pct_left(text, _DAILY_RE)
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
+        version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "codex",
             ok=True,
             daily=daily,
             weekly=weekly,
+            client_info=version.group(0) if version else None,
             raw={"screen": text},
         )
-
-
-def _screen_has_quota(text: str) -> bool:
-    """True once the /status panel's limit rows are on screen.
-
-    Handed to drive_screen as its early-exit predicate: the capture is done
-    the moment the exact rows parse() reads are rendered, so a poll (and a
-    quit landing mid-poll) doesn't sit out the full _TOTAL_TIMEOUT for a
-    screen that already has everything. Deliberately the same regexes parse()
-    uses, so "done" can never mean less than "parseable"; drive_screen still
-    reads for a further settle window after this first fires, so the second
-    window's row painted a frame later is not missed.
-    """
-    return bool(_DAILY_RE.search(text) or _WEEKLY_RE.search(text))
-
 
 def _quota_from_pct_left(text: str, pattern: re.Pattern[str]) -> Quota | None:
     m = pattern.search(text)
