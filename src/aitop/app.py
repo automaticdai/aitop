@@ -8,7 +8,7 @@ from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Static
 
-from .config import Config, layout_cells
+from .config import Config, PROVIDER_NAMES, layout_cells
 from .models import UsageSnapshot
 from .providers import build_providers
 from .render import (
@@ -162,6 +162,19 @@ class WebStatusModal(ModalScreen):
         self.dismiss()
 
 
+class AdaptiveGrid(Grid):
+    """A grid that reports its settled width back to the app."""
+
+    def on_resize(self) -> None:
+        app = self.app
+        if isinstance(app, AitopApp):
+            # A Grid receives this after its Screen has laid it out, unlike
+            # the App's terminal Resize event. Its width is therefore the
+            # reliable value to use when deciding whether another column fits.
+            if app._sync_adaptive_grid(self.size.width):
+                app.sync_cards()
+
+
 class AitopApp(App):
     TITLE = "aitop"
     BINDINGS = [
@@ -194,13 +207,24 @@ class AitopApp(App):
         yield Footer()
 
     def _build_grid(self) -> Grid:
-        # A provider's position comes from config.layout + each provider's
-        # `position` (row, col); off providers (position (-1, -1), out of
-        # bounds, or not placed by auto-fill) are omitted entirely. Empty
-        # cells become blank Static placeholders so the grid keeps its shape.
-        cells = layout_cells(self.config)
-        rows, columns = self.config.layout.rows, self.config.layout.columns
-        grid = Grid(*(SnapshotRow(name) if name else Static("") for name in cells))
+        # Fixed layouts use config.layout plus each provider's `position`.
+        # Adaptive layouts instead fill known providers in their standard
+        # order. Fixed-layout blanks become Static placeholders so that grid
+        # retains its configured shape.
+        rows, columns = self._grid_dimensions()
+        self._grid_dimensions_applied = (rows, columns)
+        cells = layout_cells(self.config, rows, columns)
+        # Adaptive layout never needs blank cells: every known provider is
+        # placed in order, and CSS Grid leaves the final partial row empty.
+        # Fixed layouts retain their placeholders so explicitly blank cells
+        # preserve the configured grid shape.
+        children = (
+            (SnapshotRow(name) for name in cells if name)
+            if self.config.layout.adaptive
+            else (SnapshotRow(name) if name else Static("") for name in cells)
+        )
+        grid_class = AdaptiveGrid if self.config.layout.adaptive else Grid
+        grid = grid_class(*children)
         grid.styles.grid_size_columns = columns
         grid.styles.grid_size_rows = rows
         # Side-by-side panels (columns > 1) otherwise sit border-to-border --
@@ -221,8 +245,60 @@ class AitopApp(App):
     # (1 cell each side) plus its `padding: 0 1`.
     _GUTTER = 2
     _CHROME = 4
+    # Keep a card wide enough for the widest built-in wordmark. Below this,
+    # render.py deliberately drops logos, so another column would make the
+    # dashboard less useful rather than more compact.
+    _ADAPTIVE_MIN_CONTENT_WIDTH = 44
     # SnapshotRow's `margin: 0 0 1 0`.
     _ROW_MARGIN = 1
+
+    def _adaptive_provider_count(self) -> int:
+        """Built-in providers shown by an adaptive layout.
+
+        Adaptive mode intentionally does not inspect provider positions. A
+        hand-built Config may omit a provider altogether, which still means it
+        is unavailable rather than merely positioned elsewhere.
+        """
+        return sum(name in self.config.providers for name in PROVIDER_NAMES)
+
+    def _grid_dimensions(self, terminal_width: int | None = None) -> tuple[int, int]:
+        """Return the active (rows, columns), adapting only when requested."""
+        if not self.config.layout.adaptive:
+            return self.config.layout.rows, self.config.layout.columns
+
+        count = self._adaptive_provider_count()
+        if count == 0:
+            return 1, 1
+        total = self.size.width if terminal_width is None else terminal_width
+        if total <= 0:
+            return count, 1
+        # For n columns, n cards and n - 1 gutters must fit. The expression
+        # below is that inequality solved for n.
+        card = self._ADAPTIVE_MIN_CONTENT_WIDTH + self._CHROME
+        columns = max(1, (total + self._GUTTER) // (card + self._GUTTER))
+        columns = min(columns, count)
+        return (count + columns - 1) // columns, columns
+
+    def _active_grid_dimensions(self) -> tuple[int, int]:
+        """Dimensions currently applied to the Grid, or the initial target."""
+        return getattr(self, "_grid_dimensions_applied", self._grid_dimensions())
+
+    def _sync_adaptive_grid(self, terminal_width: int | None = None) -> bool:
+        """Apply a new terminal-width-derived grid shape after a resize."""
+        if not self.config.layout.adaptive:
+            return False
+        dimensions = self._grid_dimensions(terminal_width)
+        if dimensions == self._active_grid_dimensions():
+            return False
+        try:
+            grid = self.query_one(Grid)
+        except NoMatches:
+            return False
+        rows, columns = dimensions
+        grid.styles.grid_size_columns = columns
+        grid.styles.grid_size_rows = rows
+        self._grid_dimensions_applied = dimensions
+        return True
 
     def _card_width(self) -> int | None:
         """Content width one card gets, derived from the terminal size.
@@ -232,7 +308,7 @@ class AitopApp(App):
         when the terminal size isn't known yet, which render.py reads as
         "unknown width" and answers with the layout that cannot clip.
         """
-        columns = max(1, self.config.layout.columns)
+        _, columns = self._grid_dimensions()
         total = self.size.width
         if total <= 0:
             return None
@@ -254,11 +330,11 @@ class AitopApp(App):
             grid = self.query_one(Grid)
         except NoMatches:
             return
-        cells = layout_cells(self.config)
-        columns = max(1, self.config.layout.columns)
+        rows, columns = self._active_grid_dimensions()
+        cells = layout_cells(self.config, rows, columns)
         needed = {row.provider: row.needed_height for row in self.query(SnapshotRow)}
         heights = []
-        for r in range(self.config.layout.rows):
+        for r in range(rows):
             in_row = cells[r * columns : (r + 1) * columns]
             heights.append(max((needed.get(n, 0) for n in in_row if n), default=1))
         # A cell still needs its two border rows even with nothing in it, and
@@ -269,6 +345,8 @@ class AitopApp(App):
         )
 
     def on_mount(self) -> None:
+        self._sync_adaptive_grid()
+        self.sync_cards()
         providers = build_providers(self.config, mock=self.mock)
         self.poller = Poller(
             providers=providers,
@@ -293,6 +371,7 @@ class AitopApp(App):
         # name comes from the config file, so it may match no row at all (a
         # typo) or not even be a valid CSS selector. An unmatched snapshot is
         # simply ignored instead of raising NoMatches into the poll loop.
+        self._sync_adaptive_grid()
         width = self._card_width()
         for row in self.query(SnapshotRow):
             if row.provider == snap.provider:

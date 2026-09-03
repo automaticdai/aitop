@@ -57,6 +57,10 @@ def _as_bool(data: dict, key: str, default: bool, path: Path) -> bool:
 class Layout:
     rows: int = 4
     columns: int = 1
+    # When enabled, the TUI derives rows and columns from the terminal width.
+    # Provider positions then have no meaning: all configured built-in
+    # providers are placed in their usual order.
+    adaptive: bool = False
 
 
 @dataclass
@@ -91,16 +95,31 @@ class Config:
         return cls(providers={name: ProviderConfig() for name in PROVIDER_NAMES})
 
 
-def place_providers(config: Config) -> dict[str, tuple[int, int]]:
+def place_providers(
+    config: Config, rows: int | None = None, columns: int | None = None
+) -> dict[str, tuple[int, int]]:
     """Resolve every *on* provider to its (row, col) cell.
 
-    A provider is on iff it ends up placed in a valid in-bounds cell. Explicit
-    positions are honored first (first in PROVIDER_NAMES order wins a collision);
-    providers with no explicit position are then auto-filled into the remaining
-    free cells in row-major order. A position outside the 1-based grid (row or
-    col < 1, or beyond rows/columns) is off (and never auto-filled).
+    A provider is on iff it ends up placed in a valid in-bounds cell. Normally,
+    explicit positions are honored first (first in PROVIDER_NAMES order wins a
+    collision); providers with no explicit position are then auto-filled into
+    the remaining free cells in row-major order. A position outside the 1-based
+    grid (row or col < 1, or beyond rows/columns) is off (and never auto-filled).
+
+    With adaptive layout enabled, positions (including ``[-1, -1]``) are
+    ignored and every configured built-in provider is filled row-major. The
+    optional dimensions let the TUI use its terminal-width-derived grid while
+    provider polling can still resolve the configured grid before mounting.
     """
-    rows, columns = config.layout.rows, config.layout.columns
+    if config.layout.adaptive and rows is None and columns is None:
+        # Polling happens before the TUI has a terminal size. Give every
+        # configured built-in provider a cell so none are skipped merely
+        # because the fixed-grid values are deliberately irrelevant here.
+        rows = max(1, sum(name in config.providers for name in PROVIDER_NAMES))
+        columns = 1
+    else:
+        rows = config.layout.rows if rows is None else rows
+        columns = config.layout.columns if columns is None else columns
     if rows < 1 or columns < 1:
         return {}
 
@@ -115,6 +134,10 @@ def place_providers(config: Config) -> dict[str, tuple[int, int]]:
             # hand-built Config, since defaults()/load_config() seed all four)
             # -- treated as off.
             continue
+        if config.layout.adaptive:
+            auto.append(name)
+            continue
+
         pos = pc.position
         if pos is None:
             auto.append(name)
@@ -142,10 +165,17 @@ def place_providers(config: Config) -> dict[str, tuple[int, int]]:
     return placement
 
 
-def layout_cells(config: Config) -> list[str | None]:
+def layout_cells(
+    config: Config, rows: int | None = None, columns: int | None = None
+) -> list[str | None]:
     """Row-major list of provider names for every grid cell (None = blank)."""
-    placement = place_providers(config)
-    rows, columns = config.layout.rows, config.layout.columns
+    if config.layout.adaptive and rows is None and columns is None:
+        rows = max(1, sum(name in config.providers for name in PROVIDER_NAMES))
+        columns = 1
+    else:
+        rows = config.layout.rows if rows is None else rows
+        columns = config.layout.columns if columns is None else columns
+    placement = place_providers(config, rows, columns)
     grid: list[list[str | None]] = [[None] * columns for _ in range(rows)]
     for name, (r, c) in placement.items():
         grid[r - 1][c - 1] = name  # 1-based config coordinate -> 0-based index
@@ -167,10 +197,12 @@ def default_config_toml() -> str:
         "# `position = [row, col]` places a provider in the [layout] grid.",
         "# Coordinates are 1-based and row-first: [1, 1] is the top-left cell.",
         "# Set a provider to [-1, -1] to turn it off (not shown, not polled).",
+        "# Set `adaptive = true` to size the grid to the terminal; positions are then ignored.",
         "",
         f"refresh_interval_s = {cfg.refresh_interval_s:g}",
         "",
         "[layout]",
+        f"adaptive = {str(cfg.layout.adaptive).lower()}",
         f"rows = {cfg.layout.rows}",
         f"columns = {cfg.layout.columns}",
         "",
@@ -218,6 +250,10 @@ def _parse_config(path: Path) -> Config:
             cfg.layout.rows = _as_int(layout_data, "rows", cfg.layout.rows, path)
         if "columns" in layout_data:
             cfg.layout.columns = _as_int(layout_data, "columns", cfg.layout.columns, path)
+        if "adaptive" in layout_data:
+            cfg.layout.adaptive = _as_bool(
+                layout_data, "adaptive", cfg.layout.adaptive, path
+            )
 
     web_data = data.get("web")
     if isinstance(web_data, dict):

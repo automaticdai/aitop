@@ -106,6 +106,34 @@ def test_grid_composes_rows_in_row_major_order_and_omits_off_providers():
     asyncio.run(scenario())
 
 
+def test_adaptive_grid_reflows_and_ignores_positions():
+    cfg = Config.defaults()
+    cfg.refresh_interval_s = 3600.0
+    cfg.layout.adaptive = True
+    cfg.providers["claude"].position = (2, 2)
+    cfg.providers["codex"].position = (-1, -1)
+
+    async def scenario():
+        app = AitopApp(config=cfg, mock=True)
+        async with app.run_test(size=(80, 24)) as pilot:
+            grid = app.query_one(Grid)
+            assert grid.styles.grid_size_columns == 1
+            assert [row.provider for row in app.query(SnapshotRow)] == [
+                "claude", "codex", "gemini", "deepseek"
+            ]
+            await pilot.resize_terminal(120, 24)
+            await pilot.pause()
+            assert app._grid_dimensions() == (2, 2)
+            assert grid.styles.grid_size_columns == 2
+            assert grid.styles.grid_size_rows == 2
+            await pilot.resize_terminal(80, 24)
+            await pilot.pause()
+            assert grid.styles.grid_size_columns == 1
+            assert grid.styles.grid_size_rows == 4
+
+    asyncio.run(scenario())
+
+
 def test_quitting_stops_the_poller():
     # Without this the poll loop kept running while the interpreter was
     # shutting down, stalling quit for up to a full fetch budget.

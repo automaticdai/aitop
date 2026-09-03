@@ -19,6 +19,7 @@ def test_default_layout_is_the_legacy_vertical_stack():
     cfg = Config.defaults()
     assert cfg.layout.rows == 4
     assert cfg.layout.columns == 1
+    assert cfg.layout.adaptive is False
     assert place_providers(cfg) == {
         "claude": (1, 1),
         "codex": (2, 1),
@@ -35,7 +36,7 @@ def test_load_missing_file(tmp_path):
 def test_default_config_toml_is_valid_and_matches_defaults():
     data = tomllib.loads(default_config_toml())
     assert data["refresh_interval_s"] == 30
-    assert data["layout"] == {"rows": 4, "columns": 1}
+    assert data["layout"] == {"adaptive": False, "rows": 4, "columns": 1}
     assert set(data["providers"]) == {"claude", "codex", "gemini", "deepseek"}
     assert data["providers"]["claude"]["position"] == [1, 1]
     assert data["providers"]["deepseek"]["position"] == [4, 1]
@@ -131,6 +132,25 @@ def test_load_parses_layout_section(tmp_path):
     cfg = load_config(p)
     assert cfg.layout.rows == 3
     assert cfg.layout.columns == 2
+
+
+def test_load_parses_adaptive_layout(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[layout]\nadaptive = true\n")
+    assert load_config(p).layout.adaptive is True
+
+
+def test_adaptive_layout_ignores_provider_positions():
+    cfg = Config.defaults()
+    cfg.layout.adaptive = True
+    cfg.layout.rows = 2
+    cfg.layout.columns = 2
+    cfg.providers["claude"].position = (2, 2)
+    cfg.providers["codex"].position = (-1, -1)
+    cfg.providers["gemini"].position = (1, 2)
+    cfg.providers["deepseek"].position = (9, 9)
+
+    assert layout_cells(cfg) == ["claude", "codex", "gemini", "deepseek"]
 
 
 def test_load_parses_positions(tmp_path):

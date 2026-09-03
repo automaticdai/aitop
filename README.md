@@ -107,6 +107,7 @@ Example config showing everything that's currently configurable:
 refresh_interval_s = 30
 
 [layout]
+adaptive = false
 rows = 2
 columns = 2
 
@@ -130,6 +131,7 @@ port = 8787
 
 - `refresh_interval_s` — how often (in seconds) the app polls all on providers again after a full round finishes. Defaults to `30`.
 - `[layout]` — the dashboard's grid. `rows` × `columns`. Defaults to a single column of 4 rows (the original vertical stack), so omitting this section changes nothing.
+  - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every configured built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
   - `rows` — number of rows. Defaults to `4`.
   - `columns` — number of columns. Defaults to `1`.
 - `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`). Any provider omitted from the file keeps its defaults.
