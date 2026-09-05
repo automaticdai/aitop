@@ -1,0 +1,3 @@
+Provider logos from https://github.com/lobehub/lobe-icons (MIT).
+packages/static-svg/icons/{claude-color,codex,antigravity-color,deepseek-color}.svg
+Downloaded 2026-09-05. Logos are trademarks of their respective owners.

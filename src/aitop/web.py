@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import json
 import logging
 import platform
+import secrets
 import threading
+from dataclasses import asdict
+from html import escape
+from importlib.resources import files
 
 import uvicorn
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
+from starlette.types import Lifespan
 
+from . import __version__
+from .config import Config, ConfigError, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
 from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data
 
@@ -37,6 +46,14 @@ def _quota(q: Quota | None) -> dict | None:
     if q is None:
         return None
     pct = q.pct
+    remaining_pct = None if pct is None else round(100 - bar_pct(pct), 1)
+    if remaining_pct is None:
+        remaining_value = "Remaining unknown"
+    elif q.unit == "%":
+        remaining_value = f"{remaining_pct:.1f}% left"
+    else:
+        remaining = max(0, min(q.limit, q.limit - q.used))
+        remaining_value = f"{remaining:g}/{q.limit:g} {q.unit} left ({remaining_pct:.1f}%)"
     return {
         "used": q.used,
         "limit": q.limit,
@@ -49,6 +66,8 @@ def _quota(q: Quota | None) -> dict | None:
         "pct": pct,
         "bar_pct": bar_pct(pct),
         "value": format_quota_value(q),
+        "remaining_bar_pct": bar_pct(remaining_pct),
+        "remaining_value": remaining_value,
         "color": bar_color(pct),
     }
 
@@ -121,14 +140,112 @@ class SnapshotStore:
             ]
 
 
-def build_app(store: SnapshotStore) -> Starlette:
+def build_app(
+    store: SnapshotStore,
+    config: Config | None = None,
+    *,
+    lifespan: Lifespan[Starlette] | None = None,
+) -> Starlette:
+    config = config if config is not None else Config.defaults()
+    cells = layout_cells(config)
+    names = [name for name in cells if name is not None]
+    settings_lock = threading.Lock()
+    settings_token = secrets.token_urlsafe(32)
+
+    def ordered_names() -> list[str]:
+        preferred = [name for name in config.web.provider_order if name in names]
+        return preferred + [name for name in names if name not in preferred]
+
+    def settings_data() -> dict:
+        return {"layout": asdict(config.web.layout), "show_claude_gpt": config.web.show_claude_gpt,
+                "provider_order": ordered_names()}
+
+    page_config = {
+        "adaptive": config.layout.adaptive,
+        "rows": config.layout.rows,
+        "columns": config.layout.columns,
+        "cells": cells,
+        "display_names": {name: DISPLAY_NAME.get(name, name) for name in names},
+        "refresh_interval_s": config.refresh_interval_s,
+        "show_remaining": config.web.show_remaining,
+        "settings_token": settings_token,
+    }
+
     async def snapshots(request) -> JSONResponse:
-        return JSONResponse(store.entries())
+        entries = {entry["provider"]: entry for entry in store.entries()}
+        with settings_lock:
+            order = ordered_names()
+        return JSONResponse([entries[name] for name in order if name in entries])
 
     async def index(request) -> HTMLResponse:
-        return HTMLResponse(INDEX_HTML)
+        with settings_lock:
+            data = {**page_config, "settings": settings_data()}
+        html = INDEX_HTML.replace("/* PAGE_CONFIG */", json.dumps(data).replace("<", "\\u003c"))
+        html = html.replace("<!-- APP_VERSION -->", escape(__version__))
+        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
-    return Starlette(routes=[Route("/api/snapshots", snapshots), Route("/", index)])
+    async def settings(request) -> JSONResponse:
+        if request.method == "GET":
+            with settings_lock:
+                data = settings_data()
+            return JSONResponse(data, headers={"Cache-Control": "no-store"})
+        # A per-process token, embedded only in the same-origin page, keeps
+        # other websites from changing this local service's configuration.
+        if not secrets.compare_digest(request.headers.get("x-aitop-token", ""), settings_token):
+            return JSONResponse({"error": "Reload the page before saving settings."}, status_code=403)
+        if request.headers.get("content-type", "").split(";")[0] != "application/json":
+            return JSONResponse({"error": "Settings must be sent as JSON."}, status_code=415)
+        try:
+            data = await request.json()
+        except (ValueError, UnicodeDecodeError):
+            return JSONResponse({"error": "Invalid settings JSON."}, status_code=400)
+        if (not isinstance(data, dict) or not {"layout", "show_claude_gpt"} <= set(data)
+                or set(data) - {"layout", "show_claude_gpt", "provider_order"}):
+            return JSONResponse({"error": "Provide layout and show_claude_gpt settings."}, status_code=400)
+        layout = data["layout"]
+        if (
+            type(data["show_claude_gpt"]) is not bool
+            or not isinstance(layout, dict)
+            or set(layout) != {"mode", "rows", "columns"}
+            or layout["mode"] not in ("adaptive", "custom")
+            or any(type(layout[k]) is not int or not 1 <= layout[k] <= 8 for k in ("rows", "columns"))
+        ):
+            return JSONResponse({"error": "Choose a valid layout with 1–8 rows and columns."}, status_code=400)
+        if layout["mode"] == "custom" and layout["rows"] * layout["columns"] < len(names):
+            return JSONResponse({"error": "The grid needs room for every enabled provider."}, status_code=400)
+        order = data.get("provider_order")
+        if "provider_order" in data and (
+            not isinstance(order, list) or any(not isinstance(name, str) for name in order)
+            or len(order) != len(names) or set(order) != set(names)
+        ):
+            return JSONResponse({"error": "Order must include each enabled provider exactly once."}, status_code=400)
+
+        def persist() -> dict:
+            with settings_lock:
+                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order)
+                return settings_data()
+
+        try:
+            saved = await run_in_threadpool(persist)
+        except ConfigError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
+        return JSONResponse(saved, headers={"Cache-Control": "no-store"})
+
+    async def favicon(request) -> Response:
+        return Response(FAVICON_SVG, media_type="image/svg+xml")
+
+    async def provider_logo(request) -> Response:
+        provider = request.path_params["provider"]
+        if provider not in DISPLAY_NAME:
+            return Response(status_code=404)
+        svg = files("aitop").joinpath("static", provider + ".svg").read_bytes()
+        return Response(svg, media_type="image/svg+xml")
+
+    return Starlette(
+        routes=[Route("/api/snapshots", snapshots), Route("/api/settings", settings, methods=["GET", "PUT"]),
+                Route("/logos/{provider}.svg", provider_logo), Route("/favicon.svg", favicon), Route("/", index)],
+        lifespan=lifespan,
+    )
 
 
 class WebServer:
@@ -139,9 +256,13 @@ class WebServer:
     is logged and the thread dies -- it must never take the dashboard down.
     """
 
-    def __init__(self, store: SnapshotStore, host: str, port: int) -> None:
-        config = uvicorn.Config(build_app(store), host=host, port=port, log_level="warning")
-        self._server = uvicorn.Server(config)
+    def __init__(
+        self, store: SnapshotStore, host: str, port: int, config: Config | None = None
+    ) -> None:
+        server_config = uvicorn.Config(
+            build_app(store, config), host=host, port=port, log_level="warning"
+        )
+        self._server = uvicorn.Server(server_config)
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -160,62 +281,471 @@ class WebServer:
             log.exception("web server failed")
 
 
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="16" fill="#1b2440"/>
+  <rect x="12" y="14" width="10" height="36" rx="5" fill="#313c59"/>
+  <rect x="27" y="14" width="10" height="36" rx="5" fill="#313c59"/>
+  <rect x="42" y="14" width="10" height="36" rx="5" fill="#313c59"/>
+  <rect x="12" y="34" width="10" height="16" rx="5" fill="#9bb5ff"/>
+  <rect x="27" y="24" width="10" height="26" rx="5" fill="#72d5a3"/>
+  <rect x="42" y="14" width="10" height="36" rx="5" fill="#f3bd65"/>
+</svg>"""
+
+
 INDEX_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>aitop</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=usage-bars">
 <style>
   :root {
     --bg: #f5f6f8; --card: #ffffff; --text: #1f2328; --muted: #6b7280; --border: #e5e7eb;
+    --accent: #315cdb; --soft: #edf2ff; --shadow: 0 4px 24px #1f232806;
+    color-scheme: light dark;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #0f1115; --card: #171a21; --text: #e6e8eb; --muted: #9aa0a6; --border: #262b33; }
+    :root { --bg: #0f1115; --card: #171a21; --text: #e6e8eb; --muted: #9aa0a6; --border: #262b33;
+            --accent: #9bb5ff; --soft: #222d48; --shadow: 0 4px 24px #00000012; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-         background: var(--bg); color: var(--text); padding: 24px; }
-  .top { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
-  .top h1 { font-size: 20px; margin: 0; }
+         background: var(--bg); color: var(--text); line-height: 1.5; }
+  .dashboard { max-width: 1488px; margin: 0 auto; padding: 48px 48px 72px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 24px;
+         padding-bottom: 28px; margin-bottom: 32px; border-bottom: 1px solid var(--border); }
+  .top h1 { font-size: 26px; letter-spacing: -.8px; margin: 0; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { width: 36px; height: 36px; }
+  .top p { margin: 4px 0 0; }
+  .top-actions { display: flex; align-items: center; gap: 20px; }
   .muted { color: var(--muted); font-size: 13px; }
-  #cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  .card header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-  .card h2 { font-size: 15px; margin: 0; }
+  #cards { display: grid; gap: 24px; align-items: start; }
+  #cards.adaptive { grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+  .empty-cell { min-height: 1px; }
+  .card { min-width: 0; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--border);
+          border-radius: 16px; padding: 24px; box-shadow: var(--shadow); }
+  .card header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+  .card h2 { font-size: 16px; font-weight: 650; margin: 0; }
+  .card.dragging { opacity: .45; }
+  .card.drop-target { outline: 2px solid var(--accent); outline-offset: 4px; }
+  .card-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .drag-handle { border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+                 cursor: grab; touch-action: none; padding: 6px; line-height: 1; }
+  .drag-handle:hover { background: var(--soft); color: var(--text); }
+  .drag-handle:active { cursor: grabbing; }
+  .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
-  .client-info { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
-  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; font-weight: 500; white-space: nowrap; }
+  .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+  .badge { max-width: 100%; font-size: 12px; padding: 3px 9px; border-radius: 8px; font-weight: 500; }
   .badge.stale, .badge.nodata { background: #f9ab0022; color: #b7791f; }
   .badge.error { background: #ea433522; color: #c5221f; }
-  .quota { margin-bottom: 10px; }
-  .quota-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+  .quota { margin-bottom: 18px; }
+  .quota:last-child { margin-bottom: 0; }
+  .quota-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 13px; margin-bottom: 8px; }
+  .value { font-variant-numeric: tabular-nums; font-weight: 600; }
   .quota-head .label { color: var(--muted); }
-  .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
-  .bar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
-  .note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .bar { height: 10px; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: inherit; transition: width .3s ease; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
   .balance { font-size: 13px; margin: 8px 0; }
   /* Providers reporting more than one pool (Antigravity's Gemini and
      Claude & GPT-OSS groups) otherwise stack, making that card twice as tall
      as the others. auto-fit lays them out as columns whenever the card is
      wide enough and reflows them back to stacked when it isn't -- the same
      responsive behaviour the TUI does by measuring its own width. */
-  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); column-gap: 16px; }
+  .groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); column-gap: 16px; }
   .group { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--border); }
   /* Dimmed to match the TUI: the label names the pool, the bars under it
      carry the actual reading. */
   .group-label { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
   .empty { color: var(--muted); }
+  button, select, input { font: inherit; }
+  button { cursor: pointer; }
+  .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px;
+            background: var(--card); color: var(--text); font-size: 13px; font-weight: 600; }
+  .button:hover { background: var(--soft); }
+  .button.primary { background: var(--text); color: var(--card); border-color: var(--text); }
+  .button.primary:hover { opacity: .85; }
+  .button.quiet { background: transparent; border-color: transparent; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  .settings { width: min(440px, calc(100% - 32px)); max-height: calc(100% - 48px); padding: 28px;
+              background: var(--card); color: var(--text); border: 1px solid var(--border);
+              border-radius: 20px; box-shadow: 0 24px 80px #00000030; }
+  .settings::backdrop { background: #0f172a66; backdrop-filter: blur(3px); }
+  .settings header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .settings h2 { font-size: 20px; margin: 0; letter-spacing: -.4px; }
+  .settings p { margin: 10px 0 24px; }
+  .settings label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .settings select, .settings input { width: 100%; border: 1px solid var(--border); border-radius: 9px;
+                                    padding: 10px 12px; background: var(--bg); color: var(--text); }
+  .dimensions { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+  .presets .button { font-weight: 500; padding: 7px 12px; }
+  .settings .hint { margin: 12px 0 0; }
+  .settings .validation { color: #c5221f; font-size: 13px; margin: 12px 0 0; }
+  .order-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .order-section h3 { margin: 0; font-size: 13px; }
+  .settings .order-section p { margin: 4px 0 12px; font-size: 12px; }
+  .provider-order { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  .provider-order li { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+                       background: var(--bg); border-radius: 8px; }
+  .provider-order .provider-logo { width: 22px; height: 22px; }
+  .order-name { flex: 1; min-width: 0; font-size: 12px; }
+  .order-button { border: 1px solid var(--border); background: var(--card); color: var(--text);
+                  border-radius: 6px; width: 30px; height: 30px; padding: 0; }
+  .order-button:disabled { cursor: default; opacity: .3; }
+  .settings footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 28px; }
+  .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+  .settings .toggle-setting { display: flex; justify-content: space-between; align-items: center;
+                              gap: 20px; padding-top: 20px; margin: 24px 0 0; border-top: 1px solid var(--border); }
+  .toggle-setting small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
+  .settings input[role="switch"] { appearance: none; flex-shrink: 0; width: 38px; height: 22px;
+                                     padding: 2px; border: 0; border-radius: 12px; background: var(--muted); cursor: pointer; }
+  .settings input[role="switch"]::after { content: ""; display: block; width: 18px; height: 18px;
+                                          border-radius: 50%; background: white; }
+  .settings input[role="switch"]:checked { background: #315cdb; }
+  .settings input[role="switch"]:checked::after { transform: translateX(16px); }
+  .settings :disabled { cursor: wait; opacity: .65; }
+  .menu-about { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+                border-top: 1px solid var(--border); margin-top: 24px; padding-top: 20px; font-size: 13px; }
+  .menu-about p { margin: 0; }
+  .menu-about a { color: var(--accent); text-decoration: none; }
+  .menu-about a:hover { text-decoration: underline; }
+  #layout-status { min-height: 20px; margin: 20px 0 0; }
+  @media (max-width: 640px) {
+    .dashboard { padding: 24px 20px 40px; }
+    .top { gap: 12px; margin-bottom: 24px; padding-bottom: 20px; }
+    .top-actions { flex-direction: column-reverse; align-items: flex-end; gap: 8px; }
+    .top-actions .muted { font-size: 11px; }
+    #cards { gap: 16px; }
+    .card { padding: 18px; border-radius: 12px; }
+    .settings { padding: 22px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
 </style>
 </head>
 <body>
+  <div class="dashboard">
   <header class="top">
-    <h1>aitop</h1>
-    <span class="muted">updated <span id="last">—</span></span>
+    <div><div class="brand"><img src="/favicon.svg?v=usage-bars" alt="" width="36" height="36"><h1>aitop</h1></div>
+      <p class="muted">Your AI usage, at a glance.</p></div>
+    <div class="top-actions">
+      <span class="muted">Updated <span id="last">—</span></span>
+      <button class="button" id="open-settings" type="button" aria-haspopup="dialog" aria-controls="settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>Menu
+      </button>
+    </div>
   </header>
   <main id="cards"><p class="empty">loading…</p></main>
+  <p class="muted" id="reorder-hint">Drag a card to reorder, or use Provider order in the Menu.</p>
+  <p class="muted" id="layout-status" role="status"></p>
+  </div>
+  <dialog class="settings" id="settings" aria-labelledby="settings-title" aria-describedby="settings-description">
+    <form id="layout-form">
+      <fieldset id="settings-fields">
+      <header><h2 id="settings-title">Menu</h2>
+        <button class="button quiet" id="close-settings" type="button" aria-label="Close menu">✕</button>
+      </header>
+      <p class="muted" id="settings-description">Changes are saved to your aitop config and shared across browsers.</p>
+      <label for="layout-mode">Layout</label>
+      <select id="layout-mode">
+        <option value="adaptive">Fit to screen</option>
+        <option value="custom">Custom grid</option>
+      </select>
+      <div id="custom-grid" hidden>
+        <div class="dimensions">
+          <div><label for="grid-rows">Rows</label><input id="grid-rows" type="number" min="1" max="8" step="1" required></div>
+          <div><label for="grid-columns">Columns</label><input id="grid-columns" type="number" min="1" max="8" step="1" required></div>
+        </div>
+        <div class="presets" aria-label="Grid presets">
+          <button class="button" type="button" id="preset-stack">Stack</button>
+          <button class="button" type="button" id="preset-two">2 columns</button>
+          <button class="button" type="button" id="preset-row">Single row</button>
+        </div>
+      </div>
+      <p class="muted hint" id="layout-hint"></p>
+      <section class="order-section" aria-labelledby="order-title">
+        <h3 id="order-title">Provider order</h3>
+        <p class="muted">Move cards earlier or later in the grid.</p>
+        <ol class="provider-order" id="provider-order"></ol>
+      </section>
+      <label class="toggle-setting" for="show-claude-gpt">
+        <span>Claude &amp; GPT-OSS<small>Show this quota group in Antigravity.</small></span>
+        <input id="show-claude-gpt" type="checkbox" role="switch">
+      </label>
+      <p class="validation" id="layout-error" role="alert" hidden></p>
+      <footer>
+        <button class="button primary" type="submit">Save settings</button>
+      </footer>
+      </fieldset>
+    </form>
+    <div class="menu-about">
+      <div><p>aitop <span class="muted">v<!-- APP_VERSION --></span></p>
+        <p class="muted">By automaticdai</p></div>
+      <a href="https://github.com/automaticdai/aitop" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
+    </div>
+  </dialog>
   <script>
+    const CONFIG = /* PAGE_CONFIG */;
+    const cards = document.getElementById("cards");
+    const settings = document.getElementById("settings");
+    const modeInput = document.getElementById("layout-mode");
+    const rowsInput = document.getElementById("grid-rows");
+    const columnsInput = document.getElementById("grid-columns");
+    const groupInput = document.getElementById("show-claude-gpt");
+    const settingsFields = document.getElementById("settings-fields");
+    const orderList = document.getElementById("provider-order");
+    const layoutStatus = document.getElementById("layout-status");
+    const layoutError = document.getElementById("layout-error");
+    const providerNames = CONFIG.cells.filter(name => name !== null);
+    let latestData = [];
+    let activeCells = CONFIG.cells;
+    let saving = false;
+    let settingsGeneration = 0;
+    let savedLayout = CONFIG.settings.layout;
+    let savedShowClaudeGpt = CONFIG.settings.show_claude_gpt;
+    let savedOrder = CONFIG.settings.provider_order;
+    let activeOrder = [...savedOrder];
+    let dragState = null;
+    let showClaudeGpt = savedShowClaudeGpt;
+
+    function validLayout(value) {
+      if (!value || typeof value !== "object") return false;
+      if (value.mode === "adaptive") return true;
+      return value.mode === "custom" &&
+        Number.isInteger(value.rows) && value.rows >= 1 && value.rows <= 8 &&
+        Number.isInteger(value.columns) && value.columns >= 1 && value.columns <= 8 &&
+        value.rows * value.columns >= providerNames.length;
+    }
+    function applyLayout(layout) {
+      // A hand-edited base config may enable more providers than an older
+      // custom grid can hold. Fall back without hiding any enabled provider.
+      if (!validLayout(layout)) layout = {mode: "adaptive"};
+      const adaptive = layout.mode === "adaptive";
+      cards.classList.toggle("adaptive", adaptive);
+      cards.style.gridTemplateColumns = adaptive ? "" : "repeat(" +
+        layout.columns + ", minmax(0, 1fr))";
+      cards.style.gridTemplateRows = adaptive ? "" : "repeat(" +
+        layout.rows + ", auto)";
+      if (adaptive) activeCells = activeOrder;
+      else activeCells = Array.from({length: layout.rows * layout.columns}, (_, i) => activeOrder[i] || null);
+      renderCards(latestData);
+    }
+    function draftLayout() {
+      return {mode: modeInput.value, rows: Number(rowsInput.value), columns: Number(columnsInput.value)};
+    }
+    function previewLayout() {
+      showClaudeGpt = groupInput.checked;
+      const custom = modeInput.value === "custom";
+      document.getElementById("custom-grid").hidden = !custom;
+      rowsInput.disabled = columnsInput.disabled = !custom;
+      document.getElementById("layout-hint").textContent = custom
+        ? "Keep at least " + providerNames.length + " cells to show every enabled provider."
+        : "Cards adjust to the available screen width.";
+      const draft = draftLayout();
+      const valid = validLayout(draft);
+      layoutError.hidden = valid;
+      layoutError.textContent = valid ? "" : "Use 1–8 rows and columns, with room for all " + providerNames.length + " providers.";
+      if (valid) applyLayout(draft);
+      return valid;
+    }
+    function openSettings() {
+      if (saving || dragState) return;
+      activeOrder = [...savedOrder];
+      renderOrderControls();
+      groupInput.checked = savedShowClaudeGpt;
+      modeInput.value = savedLayout.mode;
+      const initialColumns = savedLayout.columns;
+      columnsInput.value = initialColumns;
+      rowsInput.value = savedLayout.rows;
+      previewLayout();
+      settings.showModal();
+    }
+    function restoreSettings() {
+      showClaudeGpt = savedShowClaudeGpt;
+      activeOrder = [...savedOrder];
+      renderOrderControls();
+      applyLayout(savedLayout);
+    }
+    async function saveLayout(layout) {
+      return savePreferences({layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder}, true);
+    }
+    async function savePreferences(preferences, fromMenu) {
+      if (saving) return;
+      saving = true;
+      settingsGeneration += 1;
+      settingsFields.disabled = true;
+      layoutError.hidden = true;
+      try {
+        const response = await fetch("/api/settings", {
+          method: "PUT",
+          headers: {"Content-Type": "application/json", "X-Aitop-Token": CONFIG.settings_token},
+          body: JSON.stringify(preferences),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not save settings.");
+        savedLayout = data.layout;
+        savedShowClaudeGpt = data.show_claude_gpt;
+        savedOrder = data.provider_order;
+        restoreSettings();
+        layoutStatus.textContent = fromMenu ? "Settings saved to config." : "Card order saved to config.";
+        if (fromMenu) settings.close();
+      } catch (e) {
+        if (fromMenu) {
+          layoutError.hidden = false;
+          layoutError.textContent = e.message || "Could not save settings. Try again.";
+        } else {
+          restoreSettings();
+          layoutStatus.textContent = "Could not save card order: " + e.message;
+        }
+      } finally {
+        saving = false;
+        settingsFields.disabled = false;
+      }
+    }
+    function preset(columns) {
+      modeInput.value = "custom";
+      columnsInput.value = columns;
+      rowsInput.value = Math.max(1, Math.ceil(providerNames.length / columns));
+      previewLayout();
+    }
+    function renderOrderControls() {
+      orderList.innerHTML = activeOrder.map((name, index) => {
+        const displayName = CONFIG.display_names[name];
+        return '<li><img class="provider-logo ' + esc(name) + '" src="/logos/' + name + '.svg" alt="">' +
+          '<span class="order-name">' + esc(displayName) + '</span>' +
+          '<button class="order-button" type="button" data-provider="' + name + '" data-direction="-1" ' +
+            'aria-label="Move ' + esc(displayName) + ' earlier" ' + (index === 0 ? 'disabled' : '') + '>↑</button>' +
+          '<button class="order-button" type="button" data-provider="' + name + '" data-direction="1" ' +
+            'aria-label="Move ' + esc(displayName) + ' later" ' + (index === activeOrder.length - 1 ? 'disabled' : '') + '>↓</button></li>';
+      }).join('');
+    }
+    function reordered(order, source, target) {
+      const next = [...order];
+      const from = next.indexOf(source), to = next.indexOf(target);
+      if (from < 0 || to < 0 || from === to) return next;
+      next.splice(from, 1);
+      next.splice(to, 0, source);
+      return next;
+    }
+    function moveInMenu(name, direction) {
+      if (saving) return;
+      const index = activeOrder.indexOf(name), target = index + direction;
+      if (index < 0 || target < 0 || target >= activeOrder.length) return;
+      activeOrder = reordered(activeOrder, name, activeOrder[target]);
+      renderOrderControls();
+      previewLayout();
+      const button = orderList.querySelector('[data-provider="' + name + '"][data-direction="' + direction + '"]:not(:disabled)') ||
+        orderList.querySelector('[data-provider="' + name + '"]:not(:disabled)');
+      button?.focus();
+    }
+    async function reorderCards(source, target) {
+      if (saving || settings.open || source === target || !activeOrder.includes(source) || !activeOrder.includes(target)) return;
+      activeOrder = reordered(activeOrder, source, target);
+      applyLayout(savedLayout);
+      await savePreferences({layout: savedLayout, show_claude_gpt: savedShowClaudeGpt, provider_order: activeOrder}, false);
+    }
+    orderList.addEventListener('click', event => {
+      const button = event.target.closest('[data-direction]');
+      if (button) moveInMenu(button.dataset.provider, Number(button.dataset.direction));
+    });
+    function beginDrag(source) {
+      if (dragState || saving || settings.open || providerNames.length < 2 || !activeOrder.includes(source)) return false;
+      dragState = {source, target: source};
+      cards.querySelector('[data-provider="' + source + '"]').classList.add('dragging');
+      return true;
+    }
+    function markDropTarget(element) {
+      if (!dragState) return;
+      const card = element?.closest('.card[data-provider]');
+      dragState.target = card ? card.dataset.provider : dragState.source;
+      cards.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+      if (card && dragState.target !== dragState.source) card.classList.add('drop-target');
+    }
+    function endDrag() {
+      const previous = dragState;
+      dragState = null;
+      cards.querySelectorAll('.dragging, .drop-target').forEach(el => el.classList.remove('dragging', 'drop-target'));
+      return previous;
+    }
+    cards.addEventListener('dragstart', event => {
+      const card = event.target.closest('.card[data-provider]');
+      if (dragState || !card || !beginDrag(card.dataset.provider)) { event.preventDefault(); return; }
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', card.dataset.provider);
+    });
+    cards.addEventListener('dragover', event => {
+      if (!dragState) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      markDropTarget(event.target);
+    });
+    cards.addEventListener('drop', async event => {
+      if (!dragState) return;
+      event.preventDefault();
+      markDropTarget(event.target);
+      const {source, target} = endDrag();
+      await reorderCards(source, target);
+    });
+    cards.addEventListener('dragend', () => { if (dragState) { endDrag(); restoreSettings(); } });
+    // The grip also supports touch/pen dragging, where HTML drag-and-drop
+    // is not consistently available. Capture keeps tracking outside the grip.
+    cards.addEventListener('pointerdown', event => {
+      const handle = event.target.closest('.drag-handle');
+      if (!handle || event.button !== 0 || !beginDrag(handle.dataset.provider)) return;
+      event.preventDefault();
+      dragState.pointerId = event.pointerId;
+      handle.setPointerCapture(event.pointerId);
+    });
+    cards.addEventListener('pointermove', event => {
+      if (dragState?.pointerId !== event.pointerId) return;
+      markDropTarget(document.elementFromPoint(event.clientX, event.clientY));
+    });
+    cards.addEventListener('pointerup', async event => {
+      if (dragState?.pointerId !== event.pointerId) return;
+      markDropTarget(document.elementFromPoint(event.clientX, event.clientY));
+      const {source, target} = endDrag();
+      await reorderCards(source, target);
+    });
+    cards.addEventListener('pointercancel', event => {
+      // Native HTML dragging cancels the pointer stream as it takes over.
+      // Only cancel a grip drag here; native drags finish via dragend/drop.
+      if (dragState?.pointerId === event.pointerId) { endDrag(); restoreSettings(); }
+    });
+    cards.addEventListener('keydown', async event => {
+      const handle = event.target.closest('.drag-handle');
+      if (!handle || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      const direction = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
+      const target = activeOrder[activeOrder.indexOf(handle.dataset.provider) + direction];
+      await reorderCards(handle.dataset.provider, target);
+      cards.querySelector('.drag-handle[data-provider="' + handle.dataset.provider + '"]')?.focus();
+    });
+    document.getElementById("open-settings").addEventListener("click", openSettings);
+    document.getElementById("close-settings").addEventListener("click", () => settings.close());
+    settings.addEventListener("close", restoreSettings);
+    settings.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
+    document.getElementById("layout-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      if (previewLayout()) await saveLayout(draftLayout());
+    });
+    modeInput.addEventListener("change", previewLayout);
+    rowsInput.addEventListener("input", previewLayout);
+    columnsInput.addEventListener("input", previewLayout);
+    groupInput.addEventListener("change", previewLayout);
+    document.getElementById("preset-stack").addEventListener("click", () => preset(1));
+    document.getElementById("preset-two").addEventListener("click", () => preset(2));
+    document.getElementById("preset-row").addEventListener("click", () => preset(Math.max(1, providerNames.length)));
     const COLORS = { green: "#34a853", yellow: "#f9ab00", red: "#ea4335", dim: "#9aa0a6" };
     function esc(s) {
       return String(s).replace(/[&<>"']/g, c => (
@@ -224,12 +754,17 @@ INDEX_HTML = """<!doctype html>
     }
     function quotaRow(label, q) {
       const color = COLORS[q.color] || COLORS.dim;
+      const value = CONFIG.show_remaining ? q.remaining_value : q.value;
+      const width = CONFIG.show_remaining ? q.remaining_bar_pct : q.bar_pct;
+      const description = label + ': ' + value;
       const note = q.reset_note ? '<div class="note">' + esc(q.reset_note) + "</div>" : "";
       return (
         '<div class="quota">' +
           '<div class="quota-head"><span class="label">' + esc(label) + "</span>" +
-            '<span class="value">' + esc(q.value) + "</span></div>" +
-          '<div class="bar"><div class="bar-fill" style="width:' + q.bar_pct + "%;background:" + color + '"></div></div>' +
+            '<span class="value">' + esc(value) + "</span></div>" +
+          '<div class="bar" role="meter" aria-label="' + esc(description) + '" aria-valuemin="0" aria-valuemax="100"' +
+            (q.pct === null ? '' : ' aria-valuenow="' + width + '"') + ' aria-valuetext="' + esc(value) + '">' +
+            '<div class="bar-fill" style="width:' + width + "%;background:" + color + '"></div></div>' +
           note +
         "</div>"
       );
@@ -248,7 +783,7 @@ INDEX_HTML = """<!doctype html>
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
           esc(s.balance.currency) + (s.balance.available ? "" : ' <span class="badge error">insufficient</span>') + "</div>";
       }
-      const groups = s.groups || [];
+      const groups = (s.groups || []).filter(g => showClaudeGpt || s.provider !== "gemini" || g.label !== "Claude & GPT-OSS");
       if (groups.length) {
         body += '<div class="groups">';
         groups.forEach(g => {
@@ -265,23 +800,67 @@ INDEX_HTML = """<!doctype html>
         : "";
 
       return (
-        '<section class="card"><header><h2>' + esc(s.display_name) + "</h2>" + status + "</header>" +
+        cardStart(s.provider) + '<header>' + providerTitle(s.provider, s.display_name) +
+        '<div class="card-actions">' + status + dragHandle(s.provider) + '</div></header>' +
         clientInfo + body + "</section>"
       );
     }
+    function cardStart(name) {
+      return '<section class="card" data-provider="' + esc(name) + '" draggable="' + (providerNames.length > 1) + '">';
+    }
+    function dragHandle(name) {
+      if (providerNames.length < 2) return '';
+      return '<button class="drag-handle" type="button" data-provider="' + name +
+        '" aria-label="Reorder ' + esc(CONFIG.display_names[name]) + '" title="Drag to reorder, or use arrow keys">' +
+        '<svg width="14" height="20" viewBox="0 0 14 20" fill="currentColor" aria-hidden="true">' +
+        '<circle cx="4" cy="4" r="1.5"/><circle cx="10" cy="4" r="1.5"/>' +
+        '<circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/>' +
+        '<circle cx="4" cy="16" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg></button>';
+    }
+    function providerTitle(name, displayName) {
+      return '<div class="provider-title"><img class="provider-logo ' + esc(name) +
+        '" src="/logos/' + encodeURIComponent(name) + '.svg" width="32" height="32" alt="" draggable="false">' +
+        '<h2>' + esc(displayName) + '</h2></div>';
+    }
+    function renderCards(data) {
+      latestData = data;
+      if (dragState) return;
+      const focusedHandle = document.activeElement?.matches('.drag-handle') ? document.activeElement.dataset.provider : null;
+      const byName = new Map(data.map(s => [s.provider, s]));
+      if (!activeCells.some(name => name !== null)) {
+        cards.innerHTML = '<p class="empty">no providers enabled</p>';
+        return;
+      }
+      cards.innerHTML = activeCells.map(name => {
+        if (name === null) return '<div class="empty-cell" aria-hidden="true"></div>';
+        const snapshot = byName.get(name);
+        if (snapshot) return card(snapshot);
+        return cardStart(name) + '<header>' + providerTitle(name, CONFIG.display_names[name]) +
+          dragHandle(name) + '</header><p class="muted">loading…</p></section>';
+      }).join("");
+      if (focusedHandle) cards.querySelector('.drag-handle[data-provider="' + focusedHandle + '"]')?.focus();
+    }
     async function refresh() {
+      const generation = settingsGeneration;
       try {
-        const res = await fetch("/api/snapshots");
-        const data = await res.json();
-        document.getElementById("cards").innerHTML =
-          data.length ? data.map(card).join("") : '<p class="empty">no providers yet</p>';
+        const [res, prefs] = await Promise.all([fetch("/api/snapshots"), fetch("/api/settings")]);
+        if (!res.ok || !prefs.ok) throw new Error("dashboard request failed");
+        const [data, preferences] = await Promise.all([res.json(), prefs.json()]);
+        if (!saving && !dragState && generation === settingsGeneration) {
+          savedLayout = preferences.layout;
+          savedShowClaudeGpt = preferences.show_claude_gpt;
+          savedOrder = preferences.provider_order;
+          if (!settings.open) restoreSettings();
+        }
+        renderCards(data);
         document.getElementById("last").textContent = new Date().toLocaleTimeString();
       } catch (e) {
         document.getElementById("last").textContent = "offline";
       }
     }
+    applyLayout(savedLayout);
     refresh();
-    setInterval(refresh, 2000);
+    setInterval(refresh, CONFIG.refresh_interval_s * 1000);
   </script>
 </body>
 </html>

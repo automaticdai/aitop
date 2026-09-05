@@ -1,0 +1,19 @@
+[Unit]
+Description=aitop usage dashboard
+
+[Service]
+Type=simple
+WorkingDirectory=%h/aitop
+ExecStart=%h/aitop/.venv/bin/python -m aitop.cli --headless --config %h/aitop/config.toml
+# Add your Node.js bin directory here if the provider CLIs use nvm.
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=-%h/.config/aitop/service.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+SyslogIdentifier=aitop
+
+[Install]
+WantedBy=default.target

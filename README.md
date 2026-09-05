@@ -1,8 +1,6 @@
 # aitop
 
-`aitop` is a terminal dashboard (built with [Textual](https://github.com/Textualize/textual)) that polls your AI coding-assistant accounts on a timer and shows how much of each one's usage quota you've burned through. It watches four providers — Claude Code, Codex, Antigravity (agy), and DeepSeek — and renders each one as its own bordered block with a daily/weekly usage bar (or an account balance, for DeepSeek), so you can tell at a glance which assistant you're about to rate-limit yourself out of.
-
-![aitop dashboard](docs/screenshot.png)
+`aitop` monitors usage quotas for Claude Code, Codex, Antigravity (agy), and DeepSeek. Use the terminal dashboard, built with [Textual](https://github.com/Textualize/textual), or the web dashboard to follow session, weekly, and monthly quotas, reset times, and account balances.
 
 ## Install
 
@@ -14,15 +12,20 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`, `starlette`, `uvicorn`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `aitop` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `aitop` instead of `python -m aitop.cli`.
+This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, `pyte`, `starlette`, `uvicorn`, `tomlkit`) and, via the `dev` extra, `pytest` for running the test suite. The install also registers an `aitop` console script (from the `[project.scripts]` entry point), so once the venv is active you can just run `aitop` instead of `python -m aitop.cli`.
 
-## Running it
+## TUI
+
+The terminal interface shows each provider in a bordered panel, with configurable grid placement and automatic resizing.
+
+![aitop terminal dashboard](docs/screenshot.png)
+
+### Run the TUI
 
 ```bash
 aitop              # live mode: polls real accounts/CLIs
 aitop --mock       # mock mode: synthetic data, no credentials or CLIs needed
 aitop --config path/to/config.toml   # use a config file at a custom path
-aitop --web        # also serve the same data as a live web page
 aitop --no-web     # force the web view off (even if config enables it)
 ```
 
@@ -48,16 +51,113 @@ DeepSeek's block shows only its account balance (it has no quota/limit concept, 
 
 Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not implemented in this version — each row shows only the summary bar. The full raw response/screen-scrape text is still captured internally on every snapshot (`UsageSnapshot.raw`), so a detail view can be added later without changing any adapter.
 
-### Web view
+## Web
 
-`aitop` can also serve the same data as a small, self-refreshing web page. It's off by default; turn it on with `--web` (or `--no-web` to force it off), or set `[web] enabled = true` in the config file. When enabled, a Starlette/uvicorn server starts alongside the TUI and serves:
+The web dashboard shows provider logos, remaining-quota bars, balances, and reset notes. Its Menu controls the grid, provider order, and visibility of Antigravity's Claude & GPT-OSS quota group. Drag cards to reorder them; preferences are saved to `config.toml` and shared across browsers.
 
-- `http://127.0.0.1:8787/` — the dashboard page, which polls for fresh data every 2 s.
+![aitop web dashboard with provider logos and a two-column grid](docs/screenshot_web.png)
+
+*Web dashboard with demo data.*
+
+### Run the web dashboard
+
+```bash
+aitop --web             # serve the web dashboard alongside the TUI
+aitop --headless        # run only the web dashboard
+aitop --headless --mock # try the web dashboard with demo data
+```
+
+The web server is off by default. Enable it with `--web`, `--headless`, or `[web] enabled = true` in the config file. `--no-web` disables it when running the TUI. The server serves:
+
+- `http://127.0.0.1:8787/` — the dashboard page, refreshed every `refresh_interval_s` seconds.
 - `http://127.0.0.1:8787/api/snapshots` — the same data as raw JSON.
 
-The page shows one card per provider with a real progress bar (same green/amber/red thresholds as the TUI), the balance, reset notes, and Antigravity's two quota groups — and it honors the same stale/error semantics: a failed fetch keeps showing the last good numbers, marked stale. It binds to loopback by default, so nothing is exposed off-box unless you change `[web] host`. Under WSL2 the default is widened to `0.0.0.0` automatically, so your Windows browser can open `localhost` (WSL2 is NAT-isolated, so this still doesn't expose the page to the LAN). **The endpoints have no authentication** — keep `host` on `127.0.0.1` (or the WSL2 default) unless you're on a network you trust. Press `w` in the TUI to see the web view's status. The server runs in a background thread and is optional — a bind failure (e.g. the port is taken) is logged and the dashboard keeps running.
+The page shows one card per provider with a bar showing quota left (`100% − usage`), labelled “left”: green above 30% remaining, amber from 10–30%, red below 10%, the balance, reset notes, and Antigravity's two quota groups — and it honors the same stale/error semantics: a failed fetch keeps showing the last good numbers, marked stale. It binds to loopback by default, so nothing is exposed off-box unless you change `[web] host`. Under WSL2 the default is widened to `0.0.0.0` automatically, so your Windows browser can open `localhost` (WSL2 is NAT-isolated, so this still doesn't expose the page to the LAN). **The endpoints have no authentication** — keep `host` on `127.0.0.1` (or the WSL2 default) unless you're on a network you trust. Press `w` in the TUI to see the web view's status. The server runs in a background thread and is optional — a bind failure (e.g. the port is taken) is logged and the dashboard keeps running.
 
-![aitop web view](docs/screenshot_web.png)
+### Menu and layout
+
+The web view stores its layout in `[web.layout]`: `adaptive` fits the browser
+width and `custom` uses saved rows and columns. The base `[layout]` and provider
+positions still determine which providers are enabled and their order.
+The page reloads snapshots every
+`refresh_interval_s` seconds; provider fetches and timeouts are shared with the TUI.
+Edit the config and restart `aitop` to apply changes.
+
+Use **Menu** in the web page header to automatically fit cards to the screen
+or set custom rows and columns. Stack, two-column, and
+single-row presets preview immediately. The **Claude & GPT-OSS** switch shows or
+hides that quota group inside Antigravity; the separate Claude Code and Codex
+cards remain available. **Save settings** writes the layout to `[web.layout]`
+and the switch to `[web] show_claude_gpt` in the active config file. Changes apply
+immediately, reach other open browsers on their next refresh, and survive a
+service restart. Closing the menu cancels the preview. Custom grids keep all enabled providers
+visible. Provider polling and the base TUI layout are unchanged by these web
+display settings. Old browser-local layout preferences are no longer used.
+The menu also shows the author, installed version, and a link to the GitHub repository.
+
+Drag a card or its grip to reorder providers; each drop saves immediately to
+`[web] provider_order`. The grips also support touch dragging and arrow keys.
+**Menu → Provider order** offers earlier/later buttons with live preview; click
+**Save settings** to keep that order, or close the menu to cancel. Both controls
+share the same saved order across browsers and service restarts. A failed drop
+save restores the last saved order and shows an error.
+
+Config saves preserve comments and unrelated settings, and a failed save is
+reported in the menu. The settings API requires the token embedded in the page;
+reload an old page if you restarted the service before saving.
+
+The dashboard uses a navy usage-bar icon with blue, mint, and amber accents
+in its header and browser tab, alongside local provider
+logos, larger page margins, and card spacing that adjusts for smaller screens.
+Provider SVGs are from [Lobe Icons](https://github.com/lobehub/lobe-icons), with
+their MIT license included in the package.
+
+### Run automatically when WSL starts
+
+`--headless` runs the same provider polling and web dashboard without a terminal.
+It implies `--web`; combining it with `--no-web` is an error. SIGTERM stops polling
+and cleans up active provider CLI processes before the server exits.
+
+WSL needs [systemd enabled](https://learn.microsoft.com/en-us/windows/wsl/systemd)
+(`systemd=true` under `[boot]` in `/etc/wsl.conf`). If you change that setting,
+restart WSL from PowerShell with `wsl --shutdown`, then reopen the distribution.
+
+Install the example [user service](docs/aitop.service):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp docs/aitop.service ~/.config/systemd/user/aitop.service
+```
+
+Edit the installed unit to match your checkout, Python environment, config path,
+and provider CLI `PATH`. The example assumes a checkout at `~/aitop` with a
+`.venv`; if you use nvm, include the directory containing `node` and `codex`
+(check with `command -v node` and `command -v codex`). The service runs as your
+Linux user and uses your existing provider logins. It does not source shell
+startup files. Put any required environment variables, such as
+`DEEPSEEK_API_KEY=...`, in `~/.config/aitop/service.env` and set its permissions
+to `600`.
+
+```bash
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable --now aitop.service
+```
+
+[Lingering](https://www.freedesktop.org/software/systemd/man/252/loginctl.html)
+starts the user service manager at boot and keeps it running after logout.
+aitop will start when this WSL distribution starts; this does not launch WSL
+at Windows sign-in. Open `http://localhost:8787` with the default web port.
+
+```bash
+systemctl --user status aitop.service           # status
+journalctl --user -u aitop.service -n 50         # recent logs
+systemctl --user restart aitop.service         # apply config/code changes
+systemctl --user disable --now aitop.service    # stop and disable startup
+```
+
+While the service is running, use `aitop --no-web` if you also want the TUI,
+so it does not try to bind the service's port. The TUI starts its own polling.
 
 ## What each provider needs
 
@@ -127,6 +227,14 @@ position = [-1, -1]   # off
 enabled = false
 host = "127.0.0.1"
 port = 8787
+show_claude_gpt = true
+show_remaining = true
+provider_order = ["claude", "codex", "gemini", "deepseek"]
+
+[web.layout]
+mode = "adaptive"     # "adaptive" or "custom"
+rows = 2              # custom grid dimensions, 1–8
+columns = 2
 ```
 
 - `refresh_interval_s` — how often (in seconds) the app polls all on providers again after a full round finishes. Defaults to `30`.
@@ -141,6 +249,12 @@ port = 8787
   - `enabled` — whether to start the web server. Defaults to `false`. `--web` / `--no-web` on the command line override this.
   - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only), widened automatically to `"0.0.0.0"` under WSL2 so a Windows browser can reach `localhost`.
   - `port` — port to bind. Defaults to `8787`.
+  - `show_claude_gpt` — show the Claude & GPT-OSS quota group inside Antigravity. Defaults to `true`.
+  - `show_remaining` — show quota left in web bars and labels. Defaults to `true`; set `false` for usage. Edit the config and restart to apply. Unknown limits show “Remaining unknown”.
+  - `provider_order` — preferred card order, saved by dragging or the Menu. Defaults to `[]`, which follows the base provider order. Disabled providers stay hidden, and enabled providers missing from this list are appended.
+- `[web.layout]` — shared web display preferences, saved by the settings menu.
+  - `mode` — `"adaptive"` fits the browser width and `"custom"` uses the dimensions below. Defaults to `"adaptive"`.
+  - `rows`, `columns` — custom grid dimensions, each from `1` to `8`, defaulting to `2`. The settings menu requires enough cells for all enabled providers.
 
 You only need to specify the keys you want to override; anything left out falls back to the default shown above.
 
@@ -151,3 +265,14 @@ Run the test suite from the repo root with the project's venv:
 ```bash
 .venv/bin/python -m pytest -q
 ```
+
+### Refresh the web screenshot
+
+The README screenshot uses the [demo config](docs/screenshot_web.toml):
+
+```bash
+aitop --headless --mock --config docs/screenshot_web.toml
+```
+
+Open `http://localhost:8788` with a 1440-pixel-wide browser window and dark mode,
+then capture the dashboard to `docs/screenshot_web.png`.

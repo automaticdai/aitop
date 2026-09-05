@@ -198,7 +198,7 @@ class AitopApp(App):
             self.web_store = SnapshotStore()
             self.web_host = resolve_host(config.web.host)
             self.web_server = WebServer(
-                self.web_store, host=self.web_host, port=config.web.port
+                self.web_store, host=self.web_host, port=config.web.port, config=config
             )
 
     def compose(self) -> ComposeResult:

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from aitop.cli import build_parser
 from aitop.config import load_config
 
@@ -8,6 +10,7 @@ def test_defaults():
     args = build_parser().parse_args([])
     assert args.config is None
     assert args.mock is False
+    assert args.headless is False
 
 
 def test_mock_flag():
@@ -88,3 +91,27 @@ def test_main_web_flag_forces_enabled(monkeypatch, tmp_path):
 def test_main_no_web_flag_forces_disabled(monkeypatch, tmp_path):
     seen = _run_main(monkeypatch, tmp_path, ["--no-web"], "[web]\nenabled = true\n")
     assert seen["config"].web.enabled is False
+
+
+def test_headless_runs_service_with_config_and_mock(monkeypatch, tmp_path):
+    from aitop import service
+    from aitop.cli import main
+
+    seen = {}
+    monkeypatch.setattr(service, "run_headless", lambda **kwargs: seen.update(kwargs))
+    path = tmp_path / "config.toml"
+    path.write_text('refresh_interval_s = 17\n[web]\nenabled = false\nport = 9999\n')
+    main(["--headless", "--mock", "--config", str(path)])
+    assert seen["config"].web.enabled is True
+    assert seen["config"].web.port == 9999
+    assert seen["config"].refresh_interval_s == 17
+    assert seen["mock"] is True
+
+
+def test_headless_rejects_no_web_before_loading_config(capsys):
+    from aitop.cli import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--headless", "--no-web"])
+    assert exc.value.code == 2
+    assert "--headless cannot be combined with --no-web" in capsys.readouterr().err

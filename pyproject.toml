@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "aitop"
 version = "0.1.0"
 description = "TUI dashboard for AI coding assistant usage limits"
+authors = [{name = "automaticdai"}]
 requires-python = ">=3.11"
 dependencies = [
     "textual>=0.60.0",
@@ -14,6 +15,7 @@ dependencies = [
     # starlette <1 keeps the httpx-based TestClient (1.x deprecates it for httpx2).
     "starlette>=0.36,<1",
     "uvicorn>=0.27",
+    "tomlkit>=0.13,<1",
 ]
 
 [project.optional-dependencies]
@@ -22,8 +24,14 @@ dev = ["pytest>=8.0"]
 [project.scripts]
 aitop = "aitop.cli:main"
 
+[project.urls]
+Repository = "https://github.com/automaticdai/aitop"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+aitop = ["static/*.svg", "static/*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

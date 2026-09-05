@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import tomlkit
 
 # Config resolution order (when no explicit --config is given): the
 # project-local ./config.toml overrides the per-user ~/.config/aitop/config.toml,
@@ -74,6 +78,13 @@ class ProviderConfig:
 
 
 @dataclass
+class WebLayout:
+    mode: str = "adaptive"
+    rows: int = 2
+    columns: int = 2
+
+
+@dataclass
 class WebConfig:
     # Off by default: the dashboard is the primary surface, and the web view
     # (a live HTTP server) is opt-in. host defaults to loopback so nothing is
@@ -81,6 +92,10 @@ class WebConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 8787
+    show_claude_gpt: bool = True
+    show_remaining: bool = True
+    provider_order: list[str] = field(default_factory=list)
+    layout: WebLayout = field(default_factory=WebLayout)
 
 
 @dataclass
@@ -89,6 +104,7 @@ class Config:
     layout: Layout = field(default_factory=Layout)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     web: WebConfig = field(default_factory=WebConfig)
+    source_path: Path | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def defaults(cls) -> "Config":
@@ -210,6 +226,14 @@ def default_config_toml() -> str:
         f'enabled = {str(cfg.web.enabled).lower()}',
         f'host = "{cfg.web.host}"',
         f"port = {cfg.web.port}",
+        f"show_claude_gpt = {str(cfg.web.show_claude_gpt).lower()}",
+        f"show_remaining = {str(cfg.web.show_remaining).lower()}",
+        "provider_order = [] # Empty follows the base provider order.",
+        "",
+        "[web.layout]",
+        f'mode = "{cfg.web.layout.mode}"',
+        f"rows = {cfg.web.layout.rows}",
+        f"columns = {cfg.web.layout.columns}",
         "",
     ]
     for name in PROVIDER_NAMES:
@@ -242,6 +266,7 @@ def _parse_config(path: Path) -> Config:
         raise ConfigError(f"{path}: cannot read: {exc}") from exc
 
     cfg = Config.defaults()
+    cfg.source_path = path.resolve()
     cfg.refresh_interval_s = _as_float(data, "refresh_interval_s", cfg.refresh_interval_s, path)
 
     layout_data = data.get("layout")
@@ -263,6 +288,31 @@ def _parse_config(path: Path) -> Config:
             cfg.web.host = str(web_data["host"])
         if "port" in web_data:
             cfg.web.port = _as_int(web_data, "port", cfg.web.port, path)
+        cfg.web.show_claude_gpt = _as_bool(web_data, "show_claude_gpt", True, path)
+        cfg.web.show_remaining = _as_bool(web_data, "show_remaining", True, path)
+        order = web_data.get("provider_order", [])
+        if (not isinstance(order, list)
+                or any(not isinstance(name, str) or name not in PROVIDER_NAMES for name in order)
+                or len(set(order)) != len(order)):
+            raise ConfigError(f"{path}: `web.provider_order` must contain unique built-in provider names")
+        cfg.web.provider_order = order
+        web_layout = web_data.get("layout", {})
+        if not isinstance(web_layout, dict):
+            raise ConfigError(f"{path}: `web.layout` must be a table")
+        mode = web_layout.get("mode", "adaptive")
+        # Read older files without exposing the retired choice in the menu.
+        if mode == "config":
+            mode = "adaptive" if cfg.layout.adaptive else "custom"
+            web_layout = {"rows": cfg.layout.rows, "columns": cfg.layout.columns}
+        if mode not in ("adaptive", "custom"):
+            raise ConfigError(f"{path}: `web.layout.mode` must be adaptive or custom")
+        cfg.web.layout = WebLayout(
+            mode=mode,
+            rows=_as_int(web_layout, "rows", 2, path),
+            columns=_as_int(web_layout, "columns", 2, path),
+        )
+        if not (1 <= cfg.web.layout.rows <= 8 and 1 <= cfg.web.layout.columns <= 8):
+            raise ConfigError(f"{path}: `web.layout` rows and columns must be between 1 and 8")
 
     providers_data = data.get("providers")
     if isinstance(providers_data, dict):
@@ -288,7 +338,11 @@ def load_config(path: Path | str | None = None) -> Config:
     if path is not None:
         p = Path(path)
         _ensure_default_file(p)
-        return _parse_config(p) if p.exists() else Config.defaults()
+        if p.exists():
+            return _parse_config(p)
+        cfg = Config.defaults()
+        cfg.source_path = p.resolve()
+        return cfg
 
     # No explicit path: the project-local ./config.toml wins, then the per-user
     # config; if neither exists, generate the per-user one (the stable home).
@@ -296,4 +350,54 @@ def load_config(path: Path | str | None = None) -> Config:
         if p.exists():
             return _parse_config(p)
     _ensure_default_file(USER_CONFIG_PATH)
-    return _parse_config(USER_CONFIG_PATH) if USER_CONFIG_PATH.exists() else Config.defaults()
+    if USER_CONFIG_PATH.exists():
+        return _parse_config(USER_CONFIG_PATH)
+    cfg = Config.defaults()
+    cfg.source_path = USER_CONFIG_PATH.resolve()
+    return cfg
+
+
+def save_web_settings(
+    config: Config, layout: WebLayout, show_claude_gpt: bool,
+    provider_order: list[str] | None = None,
+) -> None:
+    """Persist only web preferences; publish in memory only after a successful save.
+
+    Read the current document to preserve unrelated edits, and use tomlkit to
+    retain comments/formatting. Atomic replacement keeps an interrupted write
+    from leaving the user's configuration truncated.
+    """
+    path = config.source_path
+    if path is None:
+        raise ConfigError("No config file is associated with this server")
+    temporary: str | None = None
+    try:
+        original = path.read_text()
+        document = tomlkit.parse(original)
+        web = document.setdefault("web", tomlkit.table())
+        web["show_claude_gpt"] = show_claude_gpt
+        if provider_order is not None:
+            web["provider_order"] = provider_order
+        table = web.setdefault("layout", tomlkit.table())
+        table["mode"] = layout.mode
+        table["rows"] = layout.rows
+        table["columns"] = layout.columns
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".aitop-", delete=False) as stream:
+            temporary = stream.name
+            os.chmod(temporary, path.stat().st_mode & 0o777)
+            stream.write(tomlkit.dumps(document))
+            stream.flush()
+            os.fsync(stream.fileno())
+        # Avoid overwriting an editor save that landed while we serialized.
+        if path.read_text() != original:
+            raise ConfigError("Config changed while saving; try again")
+        os.replace(temporary, path)
+    except (OSError, ValueError, TypeError, tomlkit.exceptions.TOMLKitError) as exc:
+        raise ConfigError(f"Could not save {path}: {exc}") from exc
+    finally:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+    config.web.layout = layout
+    config.web.show_claude_gpt = show_claude_gpt
+    if provider_order is not None:
+        config.web.provider_order = list(provider_order)

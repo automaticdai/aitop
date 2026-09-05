@@ -1,6 +1,7 @@
 import asyncio
 import socket
 
+from starlette.testclient import TestClient
 from textual.containers import Grid
 from textual.widgets import Static
 
@@ -233,6 +234,21 @@ def test_web_enabled_feeds_snapshots_to_the_store():
         assert entries[0]["daily"]["pct"] == 25.0
 
     _run(scenario, cfg)
+
+
+def test_web_server_receives_active_app_config():
+    cfg = Config(refresh_interval_s=12.5, providers={"codex": ProviderConfig((1, 2))})
+    cfg.layout.rows = 1
+    cfg.layout.columns = 2
+    cfg.web.enabled = True
+    app = AitopApp(config=cfg, mock=True)
+    client = TestClient(app.web_server._server.config.app)
+    html = client.get("/").text
+    assert '"cells": [null, "codex"]' in html
+    assert '"refresh_interval_s": 12.5' in html
+    app.web_store.update(UsageSnapshot("claude"))
+    app.web_store.update(UsageSnapshot("codex"))
+    assert [entry["provider"] for entry in client.get("/api/snapshots").json()] == ["codex"]
 
 
 def test_web_enabled_unmount_stops_server():

@@ -270,7 +270,24 @@ def test_load_partial_web_keeps_defaults(tmp_path):
 
 def test_default_config_toml_includes_web_section():
     data = tomllib.loads(default_config_toml())
-    assert data["web"] == {"enabled": False, "host": "127.0.0.1", "port": 8787}
+    assert data["web"] == {
+        "enabled": False, "host": "127.0.0.1", "port": 8787, "show_claude_gpt": True, "show_remaining": True, "provider_order": [],
+        "layout": {"mode": "adaptive", "rows": 2, "columns": 2},
+    }
+
+
+@pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])
+def test_web_remaining_preference(tmp_path, value, expected):
+    path = tmp_path / "config.toml"
+    path.write_text(f"[web]\nshow_remaining = {value}\n")
+    assert load_config(path).web.show_remaining is expected
+
+
+def test_web_remaining_rejects_non_boolean(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[web]\nshow_remaining = "invalid"\n')
+    with pytest.raises(ConfigError):
+        load_config(path)
 
 
 def test_load_config_raises_on_invalid_toml(tmp_path):
