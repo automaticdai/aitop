@@ -203,13 +203,13 @@ def test_render_snapshot_orders_windows_shortest_first():
         weekly=Quota(2, 100, "%"),
         monthly=Quota(3, 100, "%"),
     )
-    windows = {"5h", "weekly", "monthly"}
+    windows = {"session", "weekly", "monthly"}
     labels = [
         line.split()[0]
         for line in render_snapshot(snap).splitlines()
         if line.split() and line.split()[0] in windows
     ]
-    assert labels == ["5h", "weekly", "monthly"]
+    assert labels == ["session", "weekly", "monthly"]
 
 
 def test_render_snapshot_quota_line_omits_reset_line_when_absent():
@@ -419,14 +419,15 @@ def test_claude_daily_window_is_labeled_session():
     assert not any(line.startswith("daily") for line in lines)
 
 
-def test_codex_daily_window_is_labeled_5h():
-    # Codex's "daily" window is actually its rolling 5-hour rate limit (the
+def test_codex_daily_window_is_labeled_session():
+    # Codex's "daily" window is actually its rolling rate-limit window (the
     # CLI's own "5h limit:" row, see providers/codex.py's _DAILY_RE) rather
-    # than a calendar day, so it reads "5h" like Claude's "session" special
-    # case, not the generic "daily".
+    # than a calendar day, and its length isn't always 5 hours across plans --
+    # so it reads "session" like Claude's special case, not the generic
+    # "daily".
     snap = UsageSnapshot("codex", daily=Quota(12, 50, "messages"))
     lines = render_snapshot(snap).splitlines()
-    assert any(line.startswith("5h") for line in lines)
+    assert any(line.startswith("session") for line in lines)
     assert not any(line.startswith("daily") for line in lines)
 
 

@@ -208,14 +208,12 @@ def daily_label(provider: str) -> str:
     Claude Code's "daily" is actually its "Current session" -- a rolling
     session window that resets mid-session, not a calendar day -- so it reads
     "session" there. Codex's is its own CLI's "5h limit:" row (see
-    providers/codex.py's _DAILY_RE) -- a rolling 5-hour window, not a
-    calendar day either -- so it reads "5h". Every other provider keeps the
-    plain "daily".
+    providers/codex.py's _DAILY_RE) -- also a rolling window rather than a
+    calendar day, and its length isn't always 5 hours across plans -- so it
+    reads "session" too. Every other provider keeps the plain "daily".
     """
-    if provider == "claude":
+    if provider in ("claude", "codex"):
         return "session"
-    if provider == "codex":
-        return "5h"
     return "daily"
 
 

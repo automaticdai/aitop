@@ -225,5 +225,5 @@ def test_index_js_is_a_thin_template_over_server_computed_fields():
 
 def test_snapshot_to_dict_claude_daily_label():
     assert snapshot_to_dict(UsageSnapshot("claude"))["daily_label"] == "session"
-    assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "5h"
+    assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "session"
     assert snapshot_to_dict(UsageSnapshot("gemini"))["daily_label"] == "daily"
