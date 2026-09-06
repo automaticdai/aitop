@@ -47,6 +47,7 @@ def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
         "limit": 100,
         "unit": "%",
         "reset_note": None,
+        "reset_countdown": None,
         "pct": 25.0,
         "bar_pct": 25.0,
         "value": "25.0%",
@@ -182,6 +183,20 @@ def test_api_returns_json_snapshots():
     assert data[0]["daily"]["pct"] == 25.0
 
 
+def test_api_reset_countdown_keeps_original_note_and_stale_deadline(monkeypatch):
+    from aitop import reset_timer
+
+    monkeypatch.setattr(reset_timer.time, "time", lambda: 4600)
+    store = SnapshotStore()
+    store.update(UsageSnapshot("claude", fetched_at=1000,
+                               daily=Quota(25, 100, "%", "Reset in 2h 30m")))
+    store.update(UsageSnapshot("claude", ok=False, error="offline"))
+    data = TestClient(build_app(store)).get("/api/snapshots").json()[0]
+    assert data["stale"] == "offline"
+    assert data["daily"]["reset_note"] == "Reset in 2h 30m"
+    assert data["daily"]["reset_countdown"] == "Reset in 0d 1h 30m"
+
+
 def test_index_serves_html():
     client = TestClient(build_app(SnapshotStore()))
     resp = client.get("/")
@@ -246,6 +261,7 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
         "display_names": {"codex": "Codex", "claude": "Claude Code"},
         "refresh_interval_s": 7.5,
         "show_remaining": True,
+        "reset_countdown": True,
     }
     entries = client.get("/api/snapshots").json()
     assert [entry["provider"] for entry in entries] == ["codex", "claude"]

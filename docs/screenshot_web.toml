@@ -1,6 +1,8 @@
 # Demo configuration for the README web screenshot.
 # Run: aitop --headless --mock --config docs/screenshot_web.toml
 refresh_interval_s = 30
+show_remaining = true
+reset_countdown = true
 
 [layout]
 adaptive = true
@@ -11,6 +13,7 @@ host = "127.0.0.1"
 port = 8788
 show_claude_gpt = true
 show_remaining = true
+reset_countdown = true
 provider_order = ["claude", "codex", "gemini", "deepseek"]
 
 [web.layout]

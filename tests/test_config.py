@@ -271,7 +271,7 @@ def test_load_partial_web_keeps_defaults(tmp_path):
 def test_default_config_toml_includes_web_section():
     data = tomllib.loads(default_config_toml())
     assert data["web"] == {
-        "enabled": False, "host": "127.0.0.1", "port": 8787, "show_claude_gpt": True, "show_remaining": True, "provider_order": [],
+        "enabled": False, "host": "127.0.0.1", "port": 8787, "show_claude_gpt": True, "show_remaining": True, "reset_countdown": True, "provider_order": [],
         "layout": {"mode": "adaptive", "rows": 2, "columns": 2},
     }
 
@@ -288,6 +288,18 @@ def test_web_remaining_rejects_non_boolean(tmp_path):
     path.write_text('[web]\nshow_remaining = "invalid"\n')
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_shared_display_preferences_and_web_overrides(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('show_remaining = false\nreset_countdown = false\n')
+    config = load_config(path)
+    assert config.show_remaining is config.web.show_remaining is False
+    assert config.reset_countdown is config.web.reset_countdown is False
+    path.write_text(path.read_text() + '[web]\nshow_remaining = true\nreset_countdown = true\n')
+    config = load_config(path)
+    assert config.show_remaining is config.reset_countdown is False
+    assert config.web.show_remaining is config.web.reset_countdown is True
 
 
 def test_load_config_raises_on_invalid_toml(tmp_path):

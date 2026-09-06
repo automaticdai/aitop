@@ -18,7 +18,9 @@ This installs `aitop` itself plus its runtime dependencies (`textual`, `httpx`, 
 
 The terminal interface shows each provider in a bordered panel, with configurable grid placement and automatic resizing.
 
-![aitop terminal dashboard](docs/screenshot.png)
+![aitop TUI showing remaining quota and reset countdowns](docs/screenshot.png)
+
+*Terminal dashboard with demo data.*
 
 ### Run the TUI
 
@@ -35,9 +37,9 @@ In live mode, each provider only actually reports data if its own credentials/CL
 
 ### Reading a row
 
-Each provider gets its own bordered block, titled with its display name (Claude Code / Codex / Antigravity (agy) / DeepSeek — the internal provider keys used in the config file are unchanged: `claude`, `codex`, `gemini`, `deepseek`). Inside, a status dot: green when the last fetch returned usable numbers, amber when the fetch succeeded but nothing parseable came back (`no data (check the CLI's login state)`), red on an outright error. A failed fetch does **not** wipe the row: it keeps showing the last good numbers, marked `(stale — <error>)`, so one transient CLI timeout doesn't lose the values you were watching. Usage bars are colored by severity — green below 70% used, amber 70–90%, red above 90% — and the header carries the time of the most recent update.
+Each provider gets its own bordered block, titled with its display name (Claude Code / Codex / Antigravity (agy) / DeepSeek — the internal provider keys used in the config file are unchanged: `claude`, `codex`, `gemini`, `deepseek`). Inside, a status dot: green when the last fetch returned usable numbers, amber when the fetch succeeded but nothing parseable came back (`no data (check the CLI's login state)`), red on an outright error. A failed fetch does **not** wipe the row: it keeps showing the last good numbers, marked `(stale — <error>)`, so one transient CLI timeout doesn't lose the values you were watching. Bars and labels show quota remaining: 25% used becomes **75% left**. Colours indicate remaining quota — green above 30%, amber 10–30%, red below 10% — and the header carries the time of the most recent update. Reset timers use **xd yh zm**, for example `Reset in 4d 1h 24m`. Unrecognised reset notes keep their original wording.
 
-When a CLI's screen shows a reset time for a quota window, that's captured verbatim (no timezone conversion or normalization — each vendor's own wording, as-is) and shown on a line under that bar. The one exception is Claude Code's session reset, which arrives as a wall-clock time (`Resets 11pm (Europe/London)`) and is converted to a relative `Reset in 2h 30m` countdown instead.
+Reset notes appear under their bars. Relative durations such as `97h 24m` become `4d 1h 24m`; recognised clock dates are converted using the vendor timezone, or the server timezone when none is supplied. Stale snapshots retain their original reset deadline, and expired countdowns stop at `0d 0h 0m`.
 
 Antigravity's block shows two named groups rather than one bar, separated by a blank line, because the `agy` CLI reports two separate quota pools sharing the same account: "Gemini" (Gemini Flash/Pro) and "Claude & GPT-OSS" (a combined pool for Claude Opus/Sonnet and GPT-OSS models). Both are read from the same screen and rendered under their own labels.
 
@@ -55,7 +57,7 @@ Note: a per-provider "detail" pane (originally sketched as a `d` binding) is not
 
 The web dashboard shows provider logos, remaining-quota bars, balances, and reset notes. Its Menu controls the grid, provider order, and visibility of Antigravity's Claude & GPT-OSS quota group. Drag cards to reorder them; preferences are saved to `config.toml` and shared across browsers.
 
-![aitop web dashboard with provider logos and a two-column grid](docs/screenshot_web.png)
+![aitop Web showing remaining quota and reset countdowns](docs/screenshot_web.png)
 
 *Web dashboard with demo data.*
 
@@ -205,6 +207,8 @@ Example config showing everything that's currently configurable:
 
 ```toml
 refresh_interval_s = 30
+show_remaining = true
+reset_countdown = true
 
 [layout]
 adaptive = false
@@ -229,6 +233,7 @@ host = "127.0.0.1"
 port = 8787
 show_claude_gpt = true
 show_remaining = true
+reset_countdown = true
 provider_order = ["claude", "codex", "gemini", "deepseek"]
 
 [web.layout]
@@ -238,6 +243,8 @@ columns = 2
 ```
 
 - `refresh_interval_s` — how often (in seconds) the app polls all on providers again after a full round finishes. Defaults to `30`.
+- `show_remaining` — show quota left in both interfaces by default. Set `false` to show usage.
+- `reset_countdown` — format reset timers as `xd yh zm` in both interfaces. Defaults to `true`; set `false` for vendor wording. Unknown reset notes are preserved. Countdown dates use the vendor timezone when supplied, otherwise the server timezone.
 - `[layout]` — the dashboard's grid. `rows` × `columns`. Defaults to a single column of 4 rows (the original vertical stack), so omitting this section changes nothing.
   - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every configured built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
   - `rows` — number of rows. Defaults to `4`.
@@ -250,7 +257,8 @@ columns = 2
   - `host` — address to bind. Defaults to `"127.0.0.1"` (loopback only), widened automatically to `"0.0.0.0"` under WSL2 so a Windows browser can reach `localhost`.
   - `port` — port to bind. Defaults to `8787`.
   - `show_claude_gpt` — show the Claude & GPT-OSS quota group inside Antigravity. Defaults to `true`.
-  - `show_remaining` — show quota left in web bars and labels. Defaults to `true`; set `false` for usage. Edit the config and restart to apply. Unknown limits show “Remaining unknown”.
+  - `show_remaining` — optional web override of the top-level setting; omitted values inherit it. Edit the config and restart to apply. Unknown limits show “Remaining unknown”.
+  - `reset_countdown` — optional web override of the top-level reset format. The original vendor note is available by hovering over the countdown.
   - `provider_order` — preferred card order, saved by dragging or the Menu. Defaults to `[]`, which follows the base provider order. Disabled providers stay hidden, and enabled providers missing from this list are appended.
 - `[web.layout]` — shared web display preferences, saved by the settings menu.
   - `mode` — `"adaptive"` fits the browser width and `"custom"` uses the dimensions below. Defaults to `"adaptive"`.
@@ -266,9 +274,16 @@ Run the test suite from the repo root with the project's venv:
 .venv/bin/python -m pytest -q
 ```
 
-### Refresh the web screenshot
+### Refresh the screenshots
 
-The README screenshot uses the [demo config](docs/screenshot_web.toml):
+Both screenshots use demo data with remaining quota and day/hour/minute reset timers.
+For the TUI, use the [terminal demo config](docs/screenshot_tui.toml) in a 140-column × 40-row terminal and capture it to `docs/screenshot.png`:
+
+```bash
+aitop --mock --config docs/screenshot_tui.toml
+```
+
+For Web, use the [web demo config](docs/screenshot_web.toml):
 
 ```bash
 aitop --headless --mock --config docs/screenshot_web.toml

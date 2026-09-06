@@ -13,6 +13,7 @@ from .models import UsageSnapshot
 from .providers import build_providers
 from .render import (
     DISPLAY_NAME,
+    QuotaDisplay,
     has_data,
     render_loading,
     render_snapshot,
@@ -36,9 +37,10 @@ class SnapshotRow(Static):
     }
     """
 
-    def __init__(self, provider: str) -> None:
+    def __init__(self, provider: str, display: QuotaDisplay = QuotaDisplay()) -> None:
         initial = render_loading(provider)
         super().__init__(initial, id=f"row-{provider}")
+        self._quota_display = display
         self.provider = provider
         self.border_title = DISPLAY_NAME.get(provider, provider)
         self._last_good: UsageSnapshot | None = None
@@ -104,11 +106,11 @@ class SnapshotRow(Static):
         if snap.ok:
             if has_data(snap):
                 self._last_good = snap
-            text = render_snapshot(snap, width)
+            text = render_snapshot(snap, width, self._quota_display)
         elif self._last_good is not None:
-            text = render_stale(self._last_good, snap.error, width)
+            text = render_stale(self._last_good, snap.error, width, self._quota_display)
         else:
-            text = render_snapshot(snap, width)
+            text = render_snapshot(snap, width, self._quota_display)
         self._set_height(text)
         self.update(text)
 
@@ -218,10 +220,11 @@ class AitopApp(App):
         # placed in order, and CSS Grid leaves the final partial row empty.
         # Fixed layouts retain their placeholders so explicitly blank cells
         # preserve the configured grid shape.
+        display = QuotaDisplay(self.config.show_remaining, self.config.reset_countdown)
         children = (
-            (SnapshotRow(name) for name in cells if name)
+            (SnapshotRow(name, display) for name in cells if name)
             if self.config.layout.adaptive
-            else (SnapshotRow(name) if name else Static("") for name in cells)
+            else (SnapshotRow(name, display) if name else Static("") for name in cells)
         )
         grid_class = AdaptiveGrid if self.config.layout.adaptive else Grid
         grid = grid_class(*children)

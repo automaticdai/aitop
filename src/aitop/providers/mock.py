@@ -3,16 +3,16 @@ from __future__ import annotations
 from ..models import Balance, Quota, QuotaGroup, UsageSnapshot
 
 _MOCK_QUOTAS: dict[str, tuple[Quota, Quota]] = {
-    "claude": (Quota(2.5, 5.0, "hours"), Quota(9.0, 25.0, "hours")),
-    "codex": (Quota(12, 50, "messages"), Quota(30, 200, "messages")),
+    "claude": (Quota(2.5, 5.0, "hours", "Reset in 2h 30m"), Quota(9.0, 25.0, "hours", "Reset in 97h 24m")),
+    "codex": (Quota(12, 50, "messages", "Reset in 3h 15m"), Quota(30, 200, "messages", "Reset in 120h 10m")),
 }
 
 # Mirrors the real GeminiProvider's shape: agy reports two named pools
 # (Gemini's own models, and a combined Claude/GPT-OSS pool), not a single
 # daily/weekly pair -- so --mock mode demonstrates the groups display too.
 _MOCK_GEMINI_GROUPS = [
-    QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%")),
-    QuotaGroup(label="Claude & GPT-OSS", daily=Quota(0, 100, "%"), weekly=Quota(35, 100, "%")),
+    QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%", "Refreshes in 97h 24m")),
+    QuotaGroup(label="Claude & GPT-OSS", daily=Quota(0, 100, "%"), weekly=Quota(35, 100, "%", "Refreshes in 97h 25m")),
 ]
 
 

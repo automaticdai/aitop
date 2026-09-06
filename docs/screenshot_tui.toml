@@ -1,0 +1,13 @@
+# Demo configuration for the README terminal screenshot (140 columns × 40 rows).
+# Run: aitop --mock --config docs/screenshot_tui.toml
+refresh_interval_s = 30
+show_remaining = true
+reset_countdown = true
+
+[layout]
+adaptive = false
+rows = 2
+columns = 2
+
+[web]
+enabled = false

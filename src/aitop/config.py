@@ -94,6 +94,7 @@ class WebConfig:
     port: int = 8787
     show_claude_gpt: bool = True
     show_remaining: bool = True
+    reset_countdown: bool = True
     provider_order: list[str] = field(default_factory=list)
     layout: WebLayout = field(default_factory=WebLayout)
 
@@ -101,6 +102,8 @@ class WebConfig:
 @dataclass
 class Config:
     refresh_interval_s: float = 30.0
+    show_remaining: bool = True
+    reset_countdown: bool = True
     layout: Layout = field(default_factory=Layout)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     web: WebConfig = field(default_factory=WebConfig)
@@ -216,6 +219,8 @@ def default_config_toml() -> str:
         "# Set `adaptive = true` to size the grid to the terminal; positions are then ignored.",
         "",
         f"refresh_interval_s = {cfg.refresh_interval_s:g}",
+        f"show_remaining = {str(cfg.show_remaining).lower()}",
+        f"reset_countdown = {str(cfg.reset_countdown).lower()}",
         "",
         "[layout]",
         f"adaptive = {str(cfg.layout.adaptive).lower()}",
@@ -228,6 +233,7 @@ def default_config_toml() -> str:
         f"port = {cfg.web.port}",
         f"show_claude_gpt = {str(cfg.web.show_claude_gpt).lower()}",
         f"show_remaining = {str(cfg.web.show_remaining).lower()}",
+        f"reset_countdown = {str(cfg.web.reset_countdown).lower()}",
         "provider_order = [] # Empty follows the base provider order.",
         "",
         "[web.layout]",
@@ -268,6 +274,10 @@ def _parse_config(path: Path) -> Config:
     cfg = Config.defaults()
     cfg.source_path = path.resolve()
     cfg.refresh_interval_s = _as_float(data, "refresh_interval_s", cfg.refresh_interval_s, path)
+    cfg.show_remaining = _as_bool(data, "show_remaining", True, path)
+    cfg.reset_countdown = _as_bool(data, "reset_countdown", True, path)
+    cfg.web.show_remaining = cfg.show_remaining
+    cfg.web.reset_countdown = cfg.reset_countdown
 
     layout_data = data.get("layout")
     if isinstance(layout_data, dict):
@@ -289,7 +299,8 @@ def _parse_config(path: Path) -> Config:
         if "port" in web_data:
             cfg.web.port = _as_int(web_data, "port", cfg.web.port, path)
         cfg.web.show_claude_gpt = _as_bool(web_data, "show_claude_gpt", True, path)
-        cfg.web.show_remaining = _as_bool(web_data, "show_remaining", True, path)
+        cfg.web.show_remaining = _as_bool(web_data, "show_remaining", cfg.show_remaining, path)
+        cfg.web.reset_countdown = _as_bool(web_data, "reset_countdown", cfg.reset_countdown, path)
         order = web_data.get("provider_order", [])
         if (not isinstance(order, list)
                 or any(not isinstance(name, str) or name not in PROVIDER_NAMES for name in order)

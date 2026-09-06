@@ -60,8 +60,23 @@ def test_known_provider_row_is_updated_and_header_timestamp_set():
         app._apply(UsageSnapshot("codex", daily=Quota(12, 50, "messages")))
         await pilot.pause()
         row = app.query_one("#row-codex", SnapshotRow)
-        assert "12/50" in str(row.content)
+        assert "38/50 messages left (76.0%)" in str(row.content)
         assert app.sub_title.startswith("last refresh ")
+
+    _run(scenario, cfg)
+
+
+def test_tui_honors_usage_and_native_reset_preferences():
+    cfg = Config(refresh_interval_s=3600, providers={"codex": ProviderConfig()},
+                 show_remaining=False, reset_countdown=False)
+
+    async def scenario(app, pilot):
+        app._apply(UsageSnapshot("codex", daily=Quota(12, 50, "messages", "Refreshes in 97h 24m")))
+        await pilot.pause()
+        text = str(app.query_one("#row-codex", SnapshotRow).content)
+        assert "12/50 messages (24.0%)" in text
+        assert "Refreshes in 97h 24m" in text
+        assert "left" not in text
 
     _run(scenario, cfg)
 
@@ -198,7 +213,7 @@ def test_mock_mode_with_an_unrecognized_provider_name_does_not_crash_the_app():
                     break
             assert app.is_running
             # the real provider still rendered normally
-            assert "12/50" in str(row.content)
+            assert "38/50 messages left (76.0%)" in str(row.content)
             # ...and the unknown one simply has no row to update
             assert app.query("#row-nonsense").__len__() == 0
 

@@ -448,3 +448,18 @@ def test_render_snapshot_group_separates_daily_and_weekly():
     weekly_idx = next(i for i, line in enumerate(lines) if line.startswith("weekly"))
     assert weekly_idx == daily_idx + 2
     assert lines[daily_idx + 1] == ""
+def test_remaining_render_matches_web_including_groups_and_stale():
+    from aitop.render import QuotaDisplay, format_remaining_value, render_stale
+    from aitop.web import snapshot_to_dict
+
+    snap = UsageSnapshot("codex", daily=Quota(12, 50, "messages"),
+                         groups=[QuotaGroup("pool", weekly=Quota(95, 100, "%", "Refreshes in 97h 24m"))])
+    display = QuotaDisplay(show_remaining=True, reset_countdown=True)
+    text = render_snapshot(snap, display=display)
+    data = snapshot_to_dict(snap)
+    assert data["daily"]["remaining_value"] in text
+    assert "38/50 messages left (76.0%)" in text
+    assert "5.0% left" in text and "[red]" in text
+    assert "Reset in 4d 1h 24m" in text
+    assert "38/50 messages left (76.0%)" in render_stale(snap, "offline", display=display)
+    assert format_remaining_value(Quota(1, 0, "%")) == "Remaining unknown"

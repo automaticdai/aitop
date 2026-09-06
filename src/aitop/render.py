@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, replace
 
 from textual.markup import escape
 
 from .models import Quota, QuotaGroup, UsageSnapshot
+from .reset_timer import format_reset_note
 
 # Spec §6 color thresholds for the usage bars: green below 70%, amber
 # 70-90%, red above 90% (of the quota *used*).
@@ -174,7 +176,28 @@ def _fit_bar(width: int | None, value: str) -> int:
     return max(MIN_BAR_WIDTH, min(BAR_WIDTH, width - LABEL_WIDTH - 1 - len(value)))
 
 
-def _quota_cell(label: str, q: Quota, width: int | None = None) -> list[tuple[str, int]]:
+@dataclass(frozen=True)
+class QuotaDisplay:
+    show_remaining: bool = False
+    reset_countdown: bool = False
+    fetched_at: float = 0
+
+
+def remaining_pct(q: Quota) -> float | None:
+    return None if q.pct is None else round(100 - bar_pct(q.pct), 1)
+
+
+def format_remaining_value(q: Quota) -> str:
+    pct = remaining_pct(q)
+    if pct is None:
+        return "Remaining unknown"
+    if q.unit == "%":
+        return f"{pct:.1f}% left"
+    remaining = max(0, min(q.limit, q.limit - q.used))
+    return f"{remaining:g}/{q.limit:g} {q.unit} left ({pct:.1f}%)"
+
+
+def _quota_cell(label: str, q: Quota, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[tuple[str, int]]:
     """One quota's lines as (markup, visible width) pairs.
 
     The visible width is computed from the *unstyled* text because the markup
@@ -183,8 +206,9 @@ def _quota_cell(label: str, q: Quota, width: int | None = None) -> list[tuple[st
     column padding in _columns().
     """
     color = bar_color(q.pct)
-    value = format_quota_value(q)
-    bar = render_bar(q.pct, _fit_bar(width, value))
+    value = format_remaining_value(q) if display.show_remaining else format_quota_value(q)
+    pct = remaining_pct(q) if display.show_remaining else q.pct
+    bar = render_bar(pct, _fit_bar(width, value))
     head = f"{label:<{LABEL_WIDTH}}{bar} {value}"
     lines = [(f"{label:<{LABEL_WIDTH}}[{color}]{bar}[/{color}] {escape(value)}", len(head))]
     if q.reset_note:
@@ -192,14 +216,15 @@ def _quota_cell(label: str, q: Quota, width: int | None = None) -> list[tuple[st
         # ("Resets Aug 25, 5am (Europe/London)") and unlike the bar it can't
         # be shrunk -- so on a narrow card the note gives up its indent rather
         # than wrapping onto a second line.
-        note = q.reset_note
+        note = (format_reset_note(q.reset_note, fetched_at=display.fetched_at)
+                if display.reset_countdown else q.reset_note)
         indent = LABEL_WIDTH if width is None else max(0, min(LABEL_WIDTH, width - len(note)))
         lines.append((f"{'':<{indent}}{escape(note)}", indent + len(note)))
     return lines
 
 
-def _quota_line(label: str, q: Quota, width: int | None = None) -> list[str]:
-    return [markup for markup, _ in _quota_cell(label, q, width)]
+def _quota_line(label: str, q: Quota, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[str]:
+    return [markup for markup, _ in _quota_cell(label, q, width, display)]
 
 
 def daily_label(provider: str) -> str:
@@ -217,17 +242,17 @@ def daily_label(provider: str) -> str:
     return "daily"
 
 
-def _group_cell(group: QuotaGroup, width: int | None = None) -> list[tuple[str, int]]:
+def _group_cell(group: QuotaGroup, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[tuple[str, int]]:
     # Dimmed: the label names the pool, the bars under it carry the actual
     # reading, so it should recede rather than compete with them. The visible
     # width is unchanged -- markup isn't drawn.
     lines = [(f"[dim]{escape(group.label)}[/dim]", len(group.label))]
     if group.daily is not None:
-        lines.extend(_quota_cell("daily", group.daily, width))
+        lines.extend(_quota_cell("daily", group.daily, width, display))
     if group.weekly is not None:
         if group.daily is not None:
             lines.append(("", 0))
-        lines.extend(_quota_cell("weekly", group.weekly, width))
+        lines.extend(_quota_cell("weekly", group.weekly, width, display))
     return lines
 
 
@@ -259,7 +284,7 @@ def _columns(cells: list[list[tuple[str, int]]], gutter: int = GROUP_GUTTER) -> 
     return rows
 
 
-def _group_lines(groups: list[QuotaGroup], width: int | None = None) -> list[str]:
+def _group_lines(groups: list[QuotaGroup], width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[str]:
     """Groups side by side when `width` says they fit, stacked otherwise.
 
     `width` is the content width available to the card, or None when that
@@ -271,7 +296,7 @@ def _group_lines(groups: list[QuotaGroup], width: int | None = None) -> list[str
         return []
     if len(groups) > 1 and width is not None:
         column = (width - GROUP_GUTTER * (len(groups) - 1)) // len(groups)
-        cells = [_group_cell(g, column) for g in groups]
+        cells = [_group_cell(g, column, display) for g in groups]
         # A reset note can't be shrunk the way a bar can, so a column may
         # still come out wider than its share -- fall through to stacked
         # rather than overflow the card.
@@ -281,7 +306,7 @@ def _group_lines(groups: list[QuotaGroup], width: int | None = None) -> list[str
     for i, group in enumerate(groups):
         if i > 0:
             lines.append("")
-        lines.extend(markup for markup, _ in _group_cell(group, width))
+        lines.extend(markup for markup, _ in _group_cell(group, width, display))
     return lines
 
 
@@ -296,20 +321,21 @@ def _client_info_line(snap: UsageSnapshot) -> str:
     return f"[dim]{escape(snap.client_info)}[/dim]"
 
 
-def _value_lines(snap: UsageSnapshot, width: int | None = None) -> list[str]:
+def _value_lines(snap: UsageSnapshot, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[str]:
+    display = replace(display, fetched_at=snap.fetched_at)
     lines = []
     if snap.daily is not None:
-        lines.extend(_quota_line(daily_label(snap.provider), snap.daily, width))
+        lines.extend(_quota_line(daily_label(snap.provider), snap.daily, width, display))
     if snap.weekly is not None:
-        lines.extend(_quota_line("weekly", snap.weekly, width))
+        lines.extend(_quota_line("weekly", snap.weekly, width, display))
     if snap.monthly is not None:
-        lines.extend(_quota_line("monthly", snap.monthly, width))
+        lines.extend(_quota_line("monthly", snap.monthly, width, display))
     if snap.balance is not None:
         b = snap.balance
         lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")
         if not b.available:
             lines.append("         [red]insufficient for API calls[/red]")
-    lines.extend(_group_lines(snap.groups or [], width))
+    lines.extend(_group_lines(snap.groups or [], width, display))
     return lines
 
 
@@ -344,14 +370,14 @@ def render_loading(provider: str, width: int | None = None) -> str:
     return _with_logo(provider, "loading…", width)
 
 
-def render_snapshot(snap: UsageSnapshot, width: int | None = None) -> str:
+def render_snapshot(snap: UsageSnapshot, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> str:
     if not snap.ok:
         return _with_logo(
             snap.provider,
             f"{_dot('red')} ERROR — {escape(snap.error or 'unknown error')}",
             width,
         )
-    lines = _value_lines(snap, width)
+    lines = _value_lines(snap, width, display)
     if not lines:
         # ok=True with nothing parsed is the most likely real-world PTY
         # failure (expired CLI session, vendor UI change, capture truncated
@@ -369,10 +395,10 @@ def render_snapshot(snap: UsageSnapshot, width: int | None = None) -> str:
     return _with_logo(snap.provider, "\n".join(body), width)
 
 
-def render_stale(last_good: UsageSnapshot, error: str | None, width: int | None = None) -> str:
+def render_stale(last_good: UsageSnapshot, error: str | None, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> str:
     """Spec §7: a failed fetch keeps showing the last good value, marked stale."""
     header = f"{_dot('red')} [dim](stale — {escape(error or 'fetch failed')})[/dim]"
-    body = [header, *_value_lines(last_good, width)]
+    body = [header, *_value_lines(last_good, width, display)]
     if last_good.client_info:
         body = [_client_info_line(last_good), "", *body]
     return _with_logo(last_good.provider, "\n".join(body), width)

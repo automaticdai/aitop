@@ -19,7 +19,8 @@ from starlette.types import Lifespan
 from . import __version__
 from .config import Config, ConfigError, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
-from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data
+from .reset_timer import format_reset_note
+from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data, remaining_pct, format_remaining_value
 
 log = logging.getLogger(__name__)
 
@@ -42,23 +43,16 @@ def resolve_host(host: str) -> str:
     return host
 
 
-def _quota(q: Quota | None) -> dict | None:
+def _quota(q: Quota | None, fetched_at: float = 0) -> dict | None:
     if q is None:
         return None
     pct = q.pct
-    remaining_pct = None if pct is None else round(100 - bar_pct(pct), 1)
-    if remaining_pct is None:
-        remaining_value = "Remaining unknown"
-    elif q.unit == "%":
-        remaining_value = f"{remaining_pct:.1f}% left"
-    else:
-        remaining = max(0, min(q.limit, q.limit - q.used))
-        remaining_value = f"{remaining:g}/{q.limit:g} {q.unit} left ({remaining_pct:.1f}%)"
     return {
         "used": q.used,
         "limit": q.limit,
         "unit": q.unit,
         "reset_note": q.reset_note,
+        "reset_countdown": format_reset_note(q.reset_note, fetched_at=fetched_at),
         # pct/color/value/bar_pct are all computed (properties or helpers), not
         # dataclass fields, so asdict would drop them -- the frontend needs
         # them spelled out here. `value` and `bar_pct` keep the formatting and
@@ -66,8 +60,8 @@ def _quota(q: Quota | None) -> dict | None:
         "pct": pct,
         "bar_pct": bar_pct(pct),
         "value": format_quota_value(q),
-        "remaining_bar_pct": bar_pct(remaining_pct),
-        "remaining_value": remaining_value,
+        "remaining_bar_pct": bar_pct(remaining_pct(q)),
+        "remaining_value": format_remaining_value(q),
         "color": bar_color(pct),
     }
 
@@ -84,16 +78,16 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "client_info": snap.client_info,
         "fetched_at": snap.fetched_at,
         "daily_label": daily_label(snap.provider),
-        "daily": _quota(snap.daily),
-        "weekly": _quota(snap.weekly),
-        "monthly": _quota(snap.monthly),
+        "daily": _quota(snap.daily, snap.fetched_at),
+        "weekly": _quota(snap.weekly, snap.fetched_at),
+        "monthly": _quota(snap.monthly, snap.fetched_at),
         "balance": (
             {"amount": balance.amount, "currency": balance.currency, "available": balance.available}
             if balance is not None
             else None
         ),
         "groups": [
-            {"label": g.label, "daily": _quota(g.daily), "weekly": _quota(g.weekly)}
+            {"label": g.label, "daily": _quota(g.daily, snap.fetched_at), "weekly": _quota(g.weekly, snap.fetched_at)}
             for g in (snap.groups or [])
         ],
     }
@@ -168,6 +162,7 @@ def build_app(
         "display_names": {name: DISPLAY_NAME.get(name, name) for name in names},
         "refresh_interval_s": config.refresh_interval_s,
         "show_remaining": config.web.show_remaining,
+        "reset_countdown": config.web.reset_countdown,
         "settings_token": settings_token,
     }
 
@@ -757,7 +752,8 @@ INDEX_HTML = """<!doctype html>
       const value = CONFIG.show_remaining ? q.remaining_value : q.value;
       const width = CONFIG.show_remaining ? q.remaining_bar_pct : q.bar_pct;
       const description = label + ': ' + value;
-      const note = q.reset_note ? '<div class="note">' + esc(q.reset_note) + "</div>" : "";
+      const reset = CONFIG.reset_countdown ? q.reset_countdown : q.reset_note;
+      const note = reset ? '<div class="note" title="' + esc(q.reset_note) + '">' + esc(reset) + "</div>" : "";
       return (
         '<div class="quota">' +
           '<div class="quota-head"><span class="label">' + esc(label) + "</span>" +
