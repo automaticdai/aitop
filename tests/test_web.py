@@ -273,13 +273,15 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
     assert page_config.pop("settings") == {
         "layout": {"mode": "custom", "rows": 2, "columns": 3}, "show_claude_gpt": True,
         "provider_order": ["codex", "claude"],
+        "enabled_providers": ["claude", "codex"],
+        "deepseek_api_key_configured": bool(web_module.os.environ.get("DEEPSEEK_API_KEY")),
     }
     assert page_config == {
         "adaptive": False,
         "rows": 2,
         "columns": 3,
         "cells": [None, "codex", None, None, None, "claude"],
-        "display_names": {"codex": "Codex", "claude": "Claude Code"},
+        "display_names": web_module.DISPLAY_NAME,
         "refresh_interval_s": 7.5,
         "show_remaining": True,
         "reset_countdown": True,
@@ -345,7 +347,7 @@ const context = vm.createContext({
     if (!options) return new Promise(() => {});
     writes.push({url, ...options});
     return Promise.resolve({ok: !input.api_error, json: async () => input.api_error
-      ? {error: input.api_error} : JSON.parse(options.body)});
+      ? {error: input.api_error} : {enabled_providers: input.enabled_providers, ...JSON.parse(options.body)}});
   },
   setInterval: (fn, ms) => { interval = ms; },
 });
@@ -364,7 +366,7 @@ process.stdout.write(JSON.stringify({loading, html: cards.innerHTML, style: card
     result = subprocess.run(
         [node, "-e", harness], input=json.dumps({
             "script": script, "data": data, "actions": actions,
-            "api_error": api_error,
+            "api_error": api_error, "enabled_providers": _page_config(TestClient(build_app(SnapshotStore(), config)))["settings"]["enabled_providers"],
         }),
         text=True, capture_output=True, check=True, timeout=10,
     )
@@ -412,6 +414,7 @@ def test_grid_settings_save_reload_and_switch_to_adaptive():
     assert json.loads(saved["writes"][0]["body"]) == {
         "layout": {"mode": "custom", "rows": 2, "columns": 2}, "show_claude_gpt": True,
         "provider_order": ["claude", "codex", "gemini", "deepseek"],
+        "enabled_providers": ["claude", "codex", "gemini", "deepseek"],
     }
     assert saved["writes"][0]["headers"]["X-Aitop-Token"]
     assert saved["status"] == "Settings saved to config."
@@ -528,9 +531,12 @@ def test_group_toggle_hides_only_antigravity_claude_gpt_and_can_be_cancelled():
     cfg.web.show_claude_gpt = False
     rendered = _render_in_js(cfg, data)
     assert "GPT-OSS" not in rendered["html"]
-    assert "Gemini" in rendered["html"] and "Claude Code" in rendered["html"]
+    assert 'class="group-label"' not in rendered["html"]
+    assert "Claude Code" in rendered["html"]
+    assert "90.0% left" in rendered["html"]
     previewed = _render_in_js(cfg, data, "openSettings(); groupInput.checked = true; previewLayout();")
     assert "GPT-OSS" in previewed["html"]
+    assert 'class="group-label">Gemini</div>' in previewed["html"]
     cancelled = _render_in_js(cfg, data, "openSettings(); groupInput.checked = true; previewLayout(); settings.close();")
     assert "GPT-OSS" not in cancelled["html"]
 

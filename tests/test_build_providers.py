@@ -10,6 +10,13 @@ def test_build_mock_providers():
     assert all(isinstance(p, MockProvider) for p in providers)
 
 
+def test_build_providers_passes_saved_deepseek_key():
+    cfg = Config.defaults()
+    cfg.providers['deepseek'].api_key = 'test-saved-key'
+    deepseek = next(p for p in build_providers(cfg) if p.name == 'deepseek')
+    assert deepseek._api_key == 'test-saved-key'
+
+
 def test_build_real_providers_skips_off_providers():
     cfg = Config.defaults()
     for name in ("claude", "codex", "gemini"):

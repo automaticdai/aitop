@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import tomllib
 
@@ -13,8 +14,11 @@ from aitop.web import SnapshotStore, build_app
 PREFERENCES = {
     "layout": {"mode": "custom", "rows": 2, "columns": 2}, "show_claude_gpt": False,
     "provider_order": ["deepseek", "claude", "codex", "gemini"],
+    "enabled_providers": ["claude", "codex", "gemini", "deepseek"],
 }
 
+
+EXPECTED_PREFS = {**PREFERENCES, "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY"))}
 
 def _client(path):
     client = TestClient(build_app(SnapshotStore(), load_config(path)))
@@ -39,7 +43,7 @@ still a string"""
     client, headers = _client(path)
     result = client.put("/api/settings", json=PREFERENCES, headers=headers)
     assert result.status_code == 200
-    assert result.json() == PREFERENCES
+    assert result.json() == EXPECTED_PREFS
     document = tomllib.loads(path.read_text())
     assert document["web"]["layout"] == PREFERENCES["layout"]
     assert document["web"]["show_claude_gpt"] is False
@@ -50,13 +54,13 @@ still a string"""
     assert "# Keep this comment" in path.read_text() and "# Keep this too" in path.read_text()
     assert path.stat().st_mode & 0o777 == 0o600
     other_browser = TestClient(client.app)
-    assert other_browser.get("/api/settings").json() == PREFERENCES
+    assert other_browser.get("/api/settings").json() == EXPECTED_PREFS
     restarted, _ = _client(path)
-    assert restarted.get("/api/settings").json() == PREFERENCES
+    assert restarted.get("/api/settings").json() == EXPECTED_PREFS
     # The endpoint and a newly loaded page agree about saved settings.
     page = restarted.get("/")
     assert page.headers["cache-control"] == "no-store"
-    assert json.loads(re.search(r"const CONFIG = (.*);", page.text).group(1))["settings"] == PREFERENCES
+    assert json.loads(re.search(r"const CONFIG = (.*);", page.text).group(1))["settings"] == EXPECTED_PREFS
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Aitop-Token": "wrong"}])
@@ -179,3 +183,104 @@ def test_invalid_order_in_config_is_reported(tmp_path, order):
     path.write_text(f'[web]\nprovider_order = {order}\n')
     with pytest.raises(ConfigError):
         load_config(path)
+
+
+def test_provider_switches_persist_and_reenable_legacy_hidden_cards(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[layout]\nrows = 1\ncolumns = 1\n'
+                    '[providers.claude]\nposition = [1, 1]\n'
+                    '[providers.codex]\nposition = [-1, -1]\n')
+    client, headers = _client(path)
+    assert client.get('/api/settings').json()['enabled_providers'] == ['claude']
+    enabled = {**PREFERENCES, 'enabled_providers': ['codex'], 'provider_order': ['codex']}
+    result = client.put('/api/settings', json=enabled, headers=headers)
+    assert result.status_code == 200
+    config = load_config(path)
+    assert set(config_module.place_providers(config)) == {'codex'}
+    assert config.providers['claude'].enabled is False
+    assert config.providers['codex'].position is None
+    restarted, _ = _client(path)
+    assert restarted.get('/api/settings').json()['enabled_providers'] == ['codex']
+    # Enabling every provider expands the fixed base grid rather than hiding cards.
+    assert client.put('/api/settings', json=PREFERENCES, headers=headers).status_code == 200
+    config = load_config(path)
+    assert len(config_module.place_providers(config)) == 4
+    assert config.layout.rows == 4
+    off = {**PREFERENCES, 'enabled_providers': [], 'provider_order': []}
+    assert client.put('/api/settings', json=off, headers=headers).status_code == 200
+    assert client.get('/api/snapshots').json() == []
+    assert config_module.place_providers(load_config(path)) == {}
+
+
+@pytest.mark.parametrize('enabled', [None, False, 'codex', ['unknown'], ['codex', 'codex'], [1]])
+def test_invalid_provider_switches_never_write_config(tmp_path, enabled):
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    before = path.read_text()
+    assert client.put('/api/settings', json={**PREFERENCES, 'enabled_providers': enabled}, headers=headers).status_code == 400
+    assert path.read_text() == before
+
+
+def test_failed_provider_save_does_not_change_config_or_notify_poller(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    config = load_config(path)
+    notified = []
+    client = TestClient(build_app(SnapshotStore(), config, on_provider_change=lambda: notified.append(True)))
+    token = json.loads(re.search(r'const CONFIG = (.*);', client.get('/').text).group(1))['settings_token']
+    before = client.get('/api/settings').json()
+    def fail(*args):
+        raise PermissionError('read-only config')
+    monkeypatch.setattr(config_module.os, 'replace', fail)
+    result = client.put('/api/settings', headers={'X-Aitop-Token': token},
+                        json={**PREFERENCES, 'enabled_providers': [], 'provider_order': []})
+    assert result.status_code == 500
+    assert client.get('/api/settings').json() == before
+    assert not notified
+
+
+def test_deepseek_key_is_private_persistent_and_never_returned(tmp_path, monkeypatch):
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    path.chmod(0o644)
+    secret = 'test-only-deepseek-credential'
+    result = client.put('/api/settings', json={**PREFERENCES, 'deepseek_api_key': secret}, headers=headers)
+    assert result.status_code == 200
+    assert result.json()['deepseek_api_key_configured'] is True
+    assert secret not in result.text
+    assert secret not in client.get('/').text
+    assert secret not in client.get('/api/settings').text
+    assert secret not in repr(load_config(path))
+    assert load_config(path).providers['deepseek'].api_key == secret
+    assert path.stat().st_mode & 0o777 == 0o600
+    # Saving another preference retains the credential without resending it.
+    assert client.put('/api/settings', json=PREFERENCES, headers=headers).status_code == 200
+    assert load_config(path).providers['deepseek'].api_key == secret
+    restarted, _ = _client(path)
+    assert restarted.get('/api/settings').json()['deepseek_api_key_configured'] is True
+
+
+@pytest.mark.parametrize('key', [None, 123, '', '  ', 'bad\nkey', 'x' * 513])
+def test_invalid_deepseek_key_does_not_write_or_echo(tmp_path, key):
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    before = path.read_text()
+    result = client.put('/api/settings', json={**PREFERENCES, 'deepseek_api_key': key}, headers=headers)
+    assert result.status_code == 400
+    assert result.json() == {'error': 'Enter a valid DeepSeek API key.'}
+    assert path.read_text() == before
+
+
+def test_failed_deepseek_save_keeps_old_key_and_permissions(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    before = path.read_text()
+    mode = path.stat().st_mode
+    def fail(*args):
+        raise PermissionError('read-only config')
+    monkeypatch.setattr(config_module.os, 'replace', fail)
+    result = client.put('/api/settings', json={**PREFERENCES, 'deepseek_api_key': 'test-secret'}, headers=headers)
+    assert result.status_code == 500
+    assert path.read_text() == before
+    assert path.stat().st_mode == mode
+    assert load_config(path).providers['deepseek'].api_key is None

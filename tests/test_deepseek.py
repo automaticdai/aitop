@@ -69,3 +69,15 @@ def test_fetch_malformed_balance_returns_error_not_raise(monkeypatch):
     snap = __import__("asyncio").run(provider.fetch())
     assert snap.ok is False
     assert snap.error is not None
+
+
+def test_configured_key_overrides_environment_and_is_redacted_from_errors(monkeypatch):
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'environment-key')
+    def handler(request):
+        assert request.headers['Authorization'] == 'Bearer saved-key'
+        raise RuntimeError('failed with saved-key')
+    provider = DeepSeekProvider(api_key='saved-key', transport=httpx.MockTransport(handler))
+    snap = __import__('asyncio').run(provider.fetch())
+    assert not snap.ok
+    assert 'saved-key' not in snap.error
+    assert '[redacted]' in snap.error

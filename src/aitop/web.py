@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import platform
 import secrets
 import threading
+from collections.abc import Callable
 from dataclasses import asdict
 from html import escape
 from importlib.resources import files
@@ -17,7 +19,7 @@ from starlette.routing import Route
 from starlette.types import Lifespan
 
 from . import __version__
-from .config import Config, ConfigError, WebLayout, layout_cells, save_web_settings
+from .config import Config, ConfigError, PROVIDER_NAMES, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
 from .reset_timer import format_reset_note
 from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data, remaining_pct, format_remaining_value
@@ -139,27 +141,31 @@ def build_app(
     config: Config | None = None,
     *,
     lifespan: Lifespan[Starlette] | None = None,
+    on_provider_change: Callable[[], None] | None = None,
 ) -> Starlette:
     config = config if config is not None else Config.defaults()
     cells = layout_cells(config)
-    names = [name for name in cells if name is not None]
     settings_lock = threading.Lock()
     settings_token = secrets.token_urlsafe(32)
 
     def ordered_names() -> list[str]:
+        names = [name for name in layout_cells(config) if name is not None]
         preferred = [name for name in config.web.provider_order if name in names]
         return preferred + [name for name in names if name not in preferred]
 
     def settings_data() -> dict:
+        deepseek = config.providers.get("deepseek")
         return {"layout": asdict(config.web.layout), "show_claude_gpt": config.web.show_claude_gpt,
-                "provider_order": ordered_names()}
+                "provider_order": ordered_names(),
+                "enabled_providers": [name for name in PROVIDER_NAMES if name in ordered_names()],
+                "deepseek_api_key_configured": bool((deepseek and deepseek.api_key) or os.environ.get("DEEPSEEK_API_KEY"))}
 
     page_config = {
         "adaptive": config.layout.adaptive,
         "rows": config.layout.rows,
         "columns": config.layout.columns,
         "cells": cells,
-        "display_names": {name: DISPLAY_NAME.get(name, name) for name in names},
+        "display_names": DISPLAY_NAME,
         "refresh_interval_s": config.refresh_interval_s,
         "show_remaining": config.web.show_remaining,
         "reset_countdown": config.web.reset_countdown,
@@ -174,7 +180,7 @@ def build_app(
 
     async def index(request) -> HTMLResponse:
         with settings_lock:
-            data = {**page_config, "settings": settings_data()}
+            data = {**page_config, "cells": layout_cells(config), "settings": settings_data()}
         html = INDEX_HTML.replace("/* PAGE_CONFIG */", json.dumps(data).replace("<", "\\u003c"))
         html = html.replace("<!-- APP_VERSION -->", escape(__version__))
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
@@ -195,9 +201,23 @@ def build_app(
         except (ValueError, UnicodeDecodeError):
             return JSONResponse({"error": "Invalid settings JSON."}, status_code=400)
         if (not isinstance(data, dict) or not {"layout", "show_claude_gpt"} <= set(data)
-                or set(data) - {"layout", "show_claude_gpt", "provider_order"}):
+                or set(data) - {"layout", "show_claude_gpt", "provider_order", "enabled_providers", "deepseek_api_key"}):
             return JSONResponse({"error": "Provide layout and show_claude_gpt settings."}, status_code=400)
         layout = data["layout"]
+        api_key = data.get("deepseek_api_key")
+        if "deepseek_api_key" in data:
+            if (not isinstance(api_key, str) or not 1 <= len(api_key.strip()) <= 512
+                    or any(not 33 <= ord(c) <= 126 for c in api_key.strip())):
+                return JSONResponse({"error": "Enter a valid DeepSeek API key."}, status_code=400)
+            api_key = api_key.strip()
+        enabled = data.get("enabled_providers")
+        if "enabled_providers" in data and (
+            not isinstance(enabled, list)
+            or any(not isinstance(name, str) or name not in PROVIDER_NAMES for name in enabled)
+            or len(set(enabled)) != len(enabled)
+        ):
+            return JSONResponse({"error": "Choose each built-in provider at most once."}, status_code=400)
+        names = enabled if enabled is not None else ordered_names()
         if (
             type(data["show_claude_gpt"]) is not bool
             or not isinstance(layout, dict)
@@ -215,15 +235,18 @@ def build_app(
         ):
             return JSONResponse({"error": "Order must include each enabled provider exactly once."}, status_code=400)
 
-        def persist() -> dict:
+        def persist() -> tuple[dict, bool]:
             with settings_lock:
-                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order)
-                return settings_data()
+                previous = set(ordered_names())
+                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_key)
+                return settings_data(), previous != set(ordered_names()) or api_key is not None
 
         try:
-            saved = await run_in_threadpool(persist)
+            saved, providers_changed = await run_in_threadpool(persist)
         except ConfigError as exc:
             return JSONResponse({"error": str(exc)}, status_code=500)
+        if providers_changed and on_provider_change is not None:
+            await run_in_threadpool(on_provider_change)
         return JSONResponse(saved, headers={"Cache-Control": "no-store"})
 
     async def favicon(request) -> Response:
@@ -252,10 +275,11 @@ class WebServer:
     """
 
     def __init__(
-        self, store: SnapshotStore, host: str, port: int, config: Config | None = None
+        self, store: SnapshotStore, host: str, port: int, config: Config | None = None,
+        on_provider_change: Callable[[], None] | None = None,
     ) -> None:
         server_config = uvicorn.Config(
-            build_app(store, config), host=host, port=port, log_level="warning"
+            build_app(store, config, on_provider_change=on_provider_change), host=host, port=port, log_level="warning"
         )
         self._server = uvicorn.Server(server_config)
         self._thread: threading.Thread | None = None
@@ -401,6 +425,7 @@ INDEX_HTML = """<!doctype html>
   .settings .toggle-setting { display: flex; justify-content: space-between; align-items: center;
                               gap: 20px; padding-top: 20px; margin: 24px 0 0; border-top: 1px solid var(--border); }
   .toggle-setting small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
+  #provider-switches .toggle-setting { margin: 0; padding: 10px 0; border-top: 0; }
   .settings input[role="switch"] { appearance: none; flex-shrink: 0; width: 38px; height: 22px;
                                      padding: 2px; border: 0; border-radius: 12px; background: var(--muted); cursor: pointer; }
   .settings input[role="switch"]::after { content: ""; display: block; width: 18px; height: 18px;
@@ -452,6 +477,19 @@ INDEX_HTML = """<!doctype html>
         <button class="button quiet" id="close-settings" type="button" aria-label="Close menu">✕</button>
       </header>
       <p class="muted" id="settings-description">Changes are saved to your aitop config and shared across browsers.</p>
+      <section class="order-section" aria-labelledby="providers-title">
+        <h3 id="providers-title">Providers</h3>
+        <p class="muted">Turn providers on or off. Disabled providers are not polled.</p>
+        <div id="provider-switches"></div>
+      </section>
+      <section class="order-section" aria-labelledby="deepseek-title">
+        <h3 id="deepseek-title">DeepSeek</h3>
+        <p class="muted" id="deepseek-key-status"></p>
+        <label for="deepseek-api-key">API key</label>
+        <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
+               maxlength="512" placeholder="Paste a key to set or replace it" aria-describedby="deepseek-key-hint">
+        <p class="muted" id="deepseek-key-hint">Leave blank to keep the current key. Saved only on this machine.</p>
+      </section>
       <label for="layout-mode">Layout</label>
       <select id="layout-mode">
         <option value="adaptive">Fit to screen</option>
@@ -502,7 +540,11 @@ INDEX_HTML = """<!doctype html>
     const orderList = document.getElementById("provider-order");
     const layoutStatus = document.getElementById("layout-status");
     const layoutError = document.getElementById("layout-error");
-    const providerNames = CONFIG.cells.filter(name => name !== null);
+    const apiKeyInput = document.getElementById("deepseek-api-key");
+    let savedKeyConfigured = CONFIG.settings.deepseek_api_key_configured;
+    const providerSwitches = document.getElementById("provider-switches");
+    let savedEnabled = CONFIG.settings.enabled_providers;
+    let providerNames = [...savedEnabled];
     let latestData = [];
     let activeCells = CONFIG.cells;
     let saving = false;
@@ -556,7 +598,11 @@ INDEX_HTML = """<!doctype html>
     }
     function openSettings() {
       if (saving || dragState) return;
+      apiKeyInput.value = "";
+      document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "An API key is configured." : "No API key configured.";
+      providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
+      renderProviderSwitches();
       renderOrderControls();
       groupInput.checked = savedShowClaudeGpt;
       modeInput.value = savedLayout.mode;
@@ -567,13 +613,19 @@ INDEX_HTML = """<!doctype html>
       settings.showModal();
     }
     function restoreSettings() {
+      apiKeyInput.value = "";
       showClaudeGpt = savedShowClaudeGpt;
+      providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
+      renderProviderSwitches();
       renderOrderControls();
       applyLayout(savedLayout);
     }
     async function saveLayout(layout) {
-      return savePreferences({layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder}, true);
+      const preferences = {layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder, enabled_providers: providerNames};
+      const key = apiKeyInput.value.trim();
+      if (key) preferences.deepseek_api_key = key;
+      return savePreferences(preferences, true);
     }
     async function savePreferences(preferences, fromMenu) {
       if (saving) return;
@@ -592,6 +644,8 @@ INDEX_HTML = """<!doctype html>
         savedLayout = data.layout;
         savedShowClaudeGpt = data.show_claude_gpt;
         savedOrder = data.provider_order;
+        savedEnabled = data.enabled_providers;
+        savedKeyConfigured = data.deepseek_api_key_configured;
         restoreSettings();
         layoutStatus.textContent = fromMenu ? "Settings saved to config." : "Card order saved to config.";
         if (fromMenu) settings.close();
@@ -614,6 +668,31 @@ INDEX_HTML = """<!doctype html>
       rowsInput.value = Math.max(1, Math.ceil(providerNames.length / columns));
       previewLayout();
     }
+    function renderProviderSwitches() {
+      providerSwitches.innerHTML = Object.keys(CONFIG.display_names).map(name =>
+        '<label class="toggle-setting" for="provider-' + name + '"><span>' +
+        esc(CONFIG.display_names[name]) + '</span><input id="provider-' + name +
+        '" data-provider="' + name + '" type="checkbox" role="switch"' +
+        (providerNames.includes(name) ? ' checked' : '') + '></label>'
+      ).join('');
+    }
+    providerSwitches.addEventListener('change', event => {
+      const input = event.target;
+      const name = input.dataset.provider;
+      if (!name || saving) return;
+      if (input.checked) {
+        if (!providerNames.includes(name)) providerNames.push(name);
+        if (!activeOrder.includes(name)) activeOrder.push(name);
+      } else {
+        providerNames = providerNames.filter(provider => provider !== name);
+        activeOrder = activeOrder.filter(provider => provider !== name);
+      }
+      if (modeInput.value === 'custom' && Number(columnsInput.value) >= 1) {
+        rowsInput.value = Math.max(Number(rowsInput.value), Math.ceil(providerNames.length / Number(columnsInput.value)));
+      }
+      renderOrderControls();
+      previewLayout();
+    });
     function renderOrderControls() {
       orderList.innerHTML = activeOrder.map((name, index) => {
         const displayName = CONFIG.display_names[name];
@@ -783,7 +862,8 @@ INDEX_HTML = """<!doctype html>
       if (groups.length) {
         body += '<div class="groups">';
         groups.forEach(g => {
-          body += '<div class="group"><div class="group-label">' + esc(g.label) + "</div>";
+          const hideTitle = s.provider === "gemini" && !showClaudeGpt && g.label === "Gemini";
+          body += '<div class="group">' + (hideTitle ? '' : '<div class="group-label">' + esc(g.label) + '</div>');
           if (g.daily) body += quotaRow("daily", g.daily);
           if (g.weekly) body += quotaRow("weekly", g.weekly);
           body += "</div>";
@@ -846,6 +926,8 @@ INDEX_HTML = """<!doctype html>
           savedLayout = preferences.layout;
           savedShowClaudeGpt = preferences.show_claude_gpt;
           savedOrder = preferences.provider_order;
+          savedEnabled = preferences.enabled_providers;
+          savedKeyConfigured = preferences.deepseek_api_key_configured;
           if (!settings.open) restoreSettings();
         }
         renderCards(data);

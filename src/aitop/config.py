@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import tomllib
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,6 +76,8 @@ class ProviderConfig:
     # place_providers().
     position: tuple[int, int] | None = None
     timeout_s: float = 15.0
+    enabled: bool = True
+    api_key: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -148,7 +151,7 @@ def place_providers(
 
     for name in PROVIDER_NAMES:
         pc = config.providers.get(name)
-        if pc is None:
+        if pc is None or not pc.enabled:
             # Absent from the providers dict at all (only possible with a
             # hand-built Config, since defaults()/load_config() seed all four)
             # -- treated as off.
@@ -246,6 +249,9 @@ def default_config_toml() -> str:
     for name in PROVIDER_NAMES:
         r, c = placement[name]
         lines.append(f"[providers.{name}]")
+        lines.append("enabled = true")
+        if name == "deepseek":
+            lines.append("# Set api_key through the web Menu, or use DEEPSEEK_API_KEY.")
         lines.append(f"position = [{r}, {c}]")
         lines.append("")
     return "\n".join(lines)
@@ -331,6 +337,11 @@ def _parse_config(path: Path) -> Config:
         for name, pdata in providers_data.items():
             pc = cfg.providers.setdefault(name, ProviderConfig())
             if isinstance(pdata, dict):
+                pc.enabled = _as_bool(pdata, "enabled", True, path)
+                if name == "deepseek" and "api_key" in pdata:
+                    if not isinstance(pdata["api_key"], str):
+                        raise ConfigError(f"{path}: `providers.deepseek.api_key` must be a string")
+                    pc.api_key = pdata["api_key"].strip() or None
                 if "position" in pdata:
                     pos = pdata["position"]
                     if isinstance(pos, (list, tuple)) and len(pos) == 2:
@@ -369,9 +380,27 @@ def load_config(path: Path | str | None = None) -> Config:
     return cfg
 
 
+def with_enabled_providers(config: Config, enabled: list[str]) -> Config:
+    """Prepare provider switches, retaining valid positions and fitting new cards."""
+    updated = deepcopy(config)
+    for name in PROVIDER_NAMES:
+        updated.providers.setdefault(name, ProviderConfig()).enabled = name in enabled
+    if not updated.layout.adaptive:
+        updated.layout.columns = max(1, updated.layout.columns)
+        updated.layout.rows = max(1, updated.layout.rows,
+                                  (len(enabled) + updated.layout.columns - 1) // updated.layout.columns)
+        placed = place_providers(updated)
+        for name in enabled:
+            if name not in placed:
+                updated.providers[name].position = None
+    return updated
+
+
 def save_web_settings(
     config: Config, layout: WebLayout, show_claude_gpt: bool,
     provider_order: list[str] | None = None,
+    enabled_providers: list[str] | None = None,
+    deepseek_api_key: str | None = None,
 ) -> None:
     """Persist only web preferences; publish in memory only after a successful save.
 
@@ -383,6 +412,7 @@ def save_web_settings(
     if path is None:
         raise ConfigError("No config file is associated with this server")
     temporary: str | None = None
+    updated = with_enabled_providers(config, enabled_providers) if enabled_providers is not None else None
     try:
         original = path.read_text()
         document = tomlkit.parse(original)
@@ -394,9 +424,25 @@ def save_web_settings(
         table["mode"] = layout.mode
         table["rows"] = layout.rows
         table["columns"] = layout.columns
+        if updated is not None:
+            providers = document.setdefault("providers", tomlkit.table())
+            for name in PROVIDER_NAMES:
+                pc = updated.providers[name]
+                entry = providers.setdefault(name, tomlkit.table())
+                entry["enabled"] = pc.enabled
+                if pc.position is None:
+                    entry.pop("position", None)
+                else:
+                    entry["position"] = list(pc.position)
+            base = document.setdefault("layout", tomlkit.table())
+            base["rows"], base["columns"] = updated.layout.rows, updated.layout.columns
+        if deepseek_api_key is not None:
+            providers = document.setdefault("providers", tomlkit.table())
+            providers.setdefault("deepseek", tomlkit.table())["api_key"] = deepseek_api_key
+        has_secret = bool(document.get("providers", {}).get("deepseek", {}).get("api_key"))
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".aitop-", delete=False) as stream:
             temporary = stream.name
-            os.chmod(temporary, path.stat().st_mode & 0o777)
+            os.chmod(temporary, 0o600 if has_secret else path.stat().st_mode & 0o777)
             stream.write(tomlkit.dumps(document))
             stream.flush()
             os.fsync(stream.fileno())
@@ -413,3 +459,8 @@ def save_web_settings(
     config.web.show_claude_gpt = show_claude_gpt
     if provider_order is not None:
         config.web.provider_order = list(provider_order)
+    if updated is not None:
+        config.providers = updated.providers
+        config.layout = updated.layout
+    if deepseek_api_key is not None:
+        config.providers.setdefault("deepseek", ProviderConfig()).api_key = deepseek_api_key

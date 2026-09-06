@@ -1,0 +1,3 @@
+include CHANGELOG.md
+recursive-include docs *.md *.toml *.service *.png
+recursive-include tests/fixtures *.txt *.json

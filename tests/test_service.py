@@ -80,3 +80,41 @@ def test_headless_server_uses_configured_bind_address(monkeypatch):
     service.run_headless(cfg, mock=True)
     assert seen["host"] == "192.168.1.5"
     assert seen["port"] == 9999
+
+
+def test_menu_changes_live_polling_and_reloads_deepseek_key(tmp_path, monkeypatch):
+    import json
+    import re
+    from aitop.config import load_config, place_providers
+
+    config = load_config(tmp_path / 'config.toml')
+    config.refresh_interval_s = 3600
+    calls = []
+    class Provider:
+        def __init__(self, name, key):
+            self.name, self.key = name, key
+        async def fetch(self):
+            calls.append((self.name, self.key))
+            return UsageSnapshot(self.name, daily=Quota(1, 100, '%'))
+    monkeypatch.setattr(service, 'build_providers', lambda config, mock: [
+        Provider(name, config.providers[name].api_key) for name in place_providers(config)
+    ])
+    with TestClient(service.build_service_app(config)) as client:
+        page = client.get('/').text
+        token = json.loads(re.search(r'const CONFIG = (.*);', page).group(1))['settings_token']
+        headers = {'X-Aitop-Token': token}
+        preferences = {'layout': {'mode': 'adaptive', 'rows': 2, 'columns': 2},
+                       'show_claude_gpt': True, 'enabled_providers': [], 'provider_order': []}
+        assert client.put('/api/settings', json=preferences, headers=headers).status_code == 200
+        time.sleep(0.05)
+        stopped = len(calls)
+        time.sleep(0.05)
+        assert len(calls) == stopped
+        assert client.get('/api/snapshots').json() == []
+        preferences.update(enabled_providers=['deepseek'], provider_order=['deepseek'], deepseek_api_key='test-new-key')
+        assert client.put('/api/settings', json=preferences, headers=headers).status_code == 200
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and ('deepseek', 'test-new-key') not in calls:
+            time.sleep(0.01)
+        assert ('deepseek', 'test-new-key') in calls
+        assert [s['provider'] for s in client.get('/api/snapshots').json()] == ['deepseek']

@@ -2,6 +2,8 @@
 
 Monitor **Claude Code, Codex, Antigravity (agy), and DeepSeek** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
+See the [v1.0 release notes](CHANGELOG.md) for highlights and upgrade instructions.
+
 ## Install
 
 Requires **Python 3.11+**. From the repository root:
@@ -45,7 +47,7 @@ Open **http://localhost:8787**. The web server is off by default.
 
 *Web dashboard with demo data.*
 
-- **Menu:** choose an automatic or custom grid, reorder providers, and toggle Antigravity's Claude & GPT-OSS group. Author, version, and GitHub are also listed here.
+- **Menu:** turn providers on/off, set a DeepSeek API key, choose a grid, and reorder cards. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
 - **Drag cards** to reorder and save immediately. Grips support touch and arrow keys.
 - **Save settings** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Closing the Menu cancels its preview.
 
@@ -62,7 +64,7 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | Claude Code | `claude` on `PATH`, already logged in | CLI `/usage` |
 | Codex | `codex` on `PATH`, already logged in | CLI `/status` |
 | Antigravity | `agy` CLI on `PATH`, already logged in | CLI `/usage`, including both quota groups |
-| DeepSeek | `DEEPSEEK_API_KEY` environment variable | HTTPS balance API |
+| DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
 
 Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek shows an account balance rather than a quota bar.
 
@@ -86,6 +88,8 @@ port = 8787
 ```
 
 Set `show_remaining = false` for usage bars, or `reset_countdown = false` for native reset notes. Web-specific overrides, provider positions, timeouts, and grid settings are covered in the [configuration reference](docs/configuration.md).
+
+Provider switches control both display and polling. Saved DeepSeek keys stay in the local config with owner-only permissions and are never returned to the browser.
 
 Restart aitop after editing the file. Changes saved through the Web Menu apply immediately.
 

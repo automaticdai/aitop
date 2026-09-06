@@ -200,7 +200,8 @@ class AitopApp(App):
             self.web_store = SnapshotStore()
             self.web_host = resolve_host(config.web.host)
             self.web_server = WebServer(
-                self.web_store, host=self.web_host, port=config.web.port, config=config
+                self.web_store, host=self.web_host, port=config.web.port, config=config,
+                on_provider_change=self._provider_settings_changed
             )
 
     def compose(self) -> ComposeResult:
@@ -262,7 +263,7 @@ class AitopApp(App):
         hand-built Config may omit a provider altogether, which still means it
         is unavailable rather than merely positioned elsewhere.
         """
-        return sum(name in self.config.providers for name in PROVIDER_NAMES)
+        return sum(name in self.config.providers and self.config.providers[name].enabled for name in PROVIDER_NAMES)
 
     def _grid_dimensions(self, terminal_width: int | None = None) -> tuple[int, int]:
         """Return the active (rows, columns), adapting only when requested."""
@@ -355,6 +356,7 @@ class AitopApp(App):
             providers=providers,
             interval_s=self.config.refresh_interval_s,
             on_result=self._apply,
+            provider_factory=lambda: build_providers(self.config, mock=self.mock),
         )
         self.run_worker(self.poller.run())
         if self.web_server is not None:
@@ -368,6 +370,21 @@ class AitopApp(App):
             self.poller.stop()
         if self.web_server is not None:
             self.web_server.stop()
+
+    def _provider_settings_changed(self) -> None:
+        self.call_from_thread(self._reload_provider_grid)
+
+    async def _reload_provider_grid(self) -> None:
+        snapshots = [(row._last_good, row._snap) for row in self.query(SnapshotRow)]
+        await self.query_one(Grid).remove()
+        await self.mount(self._build_grid(), before=self.query_one(Footer))
+        self.sync_cards()
+        for good, latest in snapshots:
+            for snapshot in (good, latest):
+                if snapshot is not None:
+                    self._apply(snapshot)
+        if self.poller is not None:
+            self.poller.request_refresh()
 
     def _apply(self, snap: UsageSnapshot) -> None:
         # Matched by attribute rather than `query_one("#row-...")`: a provider

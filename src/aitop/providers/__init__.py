@@ -18,7 +18,7 @@ def build_providers(config: Config, mock: bool = False) -> list:
         if mock:
             provider = MockProvider(name)
         elif name == "deepseek":
-            provider = DeepSeekProvider()
+            provider = DeepSeekProvider(api_key=config.providers[name].api_key)
         elif name == "codex":
             provider = CodexProvider()
         elif name == "gemini":

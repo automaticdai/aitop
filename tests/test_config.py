@@ -302,6 +302,23 @@ def test_shared_display_preferences_and_web_overrides(tmp_path):
     assert config.web.show_remaining is config.web.reset_countdown is True
 
 
+@pytest.mark.parametrize("adaptive", [True, False])
+def test_explicit_provider_disable_applies_to_both_layouts(tmp_path, adaptive):
+    path = tmp_path / "config.toml"
+    path.write_text(f'[layout]\nadaptive = {str(adaptive).lower()}\n'
+                    '[providers.codex]\nenabled = false\n')
+    config = load_config(path)
+    assert not config.providers["codex"].enabled
+    assert "codex" not in place_providers(config)
+
+
+def test_provider_enabled_rejects_invalid_value(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[providers.codex]\nenabled = "invalid"\n')
+    with pytest.raises(ConfigError):
+        load_config(path)
+
+
 def test_load_config_raises_on_invalid_toml(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text("refresh_interval_s = [not valid toml")

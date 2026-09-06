@@ -15,13 +15,16 @@ from .web import SnapshotStore, build_app, resolve_host
 def build_service_app(config: Config, mock: bool = False) -> Starlette:
     """Own the poller through ASGI startup/shutdown, with no terminal UI."""
     store = SnapshotStore()
+    poller: Poller | None = None
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
+        nonlocal poller
         poller = Poller(
             providers=build_providers(config, mock=mock),
             interval_s=config.refresh_interval_s,
             on_result=store.update,
+            provider_factory=lambda: build_providers(config, mock=mock),
         )
         task = asyncio.create_task(poller.run(), name="aitop-poller")
         try:
@@ -32,7 +35,11 @@ def build_service_app(config: Config, mock: bool = False) -> Starlette:
             poller.stop()
             await task
 
-    return build_app(store, config, lifespan=lifespan)
+    def providers_changed() -> None:
+        if poller is not None:
+            poller.request_refresh()
+
+    return build_app(store, config, lifespan=lifespan, on_provider_change=providers_changed)
 
 
 def run_headless(config: Config, mock: bool = False) -> None:

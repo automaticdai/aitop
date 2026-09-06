@@ -218,3 +218,39 @@ def test_per_provider_timeout_cuts_off_a_slow_fetch():
     assert len(results) == 1
     assert results[0].ok is False
     assert "timed out" in results[0].error
+
+
+def test_provider_changes_cancel_old_fetches_and_wake_polling():
+    async def scenario():
+        started = asyncio.Event()
+        cleaned = asyncio.Event()
+        received = asyncio.Event()
+        class Old:
+            name = 'old'
+            async def fetch(self):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    await asyncio.sleep(0.01)
+                    cleaned.set()
+        providers = [Old()]
+        results = []
+        def emit(snapshot):
+            results.append(snapshot)
+            received.set()
+        poller = Poller([], 3600, emit, stagger_s=0, provider_factory=lambda: providers)
+        task = asyncio.create_task(poller.run())
+        await asyncio.wait_for(started.wait(), 1)
+        providers = [MockProvider('codex')]
+        poller.request_refresh()
+        await asyncio.wait_for(received.wait(), 1)
+        assert cleaned.is_set()
+        assert [s.provider for s in results] == ['codex']
+        providers = []
+        poller.request_refresh()
+        await asyncio.sleep(0.05)
+        assert poller.providers == []
+        poller.stop()
+        await task
+    asyncio.run(scenario())

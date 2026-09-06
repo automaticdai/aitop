@@ -24,13 +24,17 @@ class Poller:
         on_result: Callable[[UsageSnapshot], None],
         timeout_s: float = 15.0,
         stagger_s: float = DEFAULT_STAGGER_S,
+        provider_factory: Callable[[], list[Provider]] | None = None,
     ) -> None:
         self.providers = providers
         self.interval_s = interval_s
         self.on_result = on_result
         self.timeout_s = timeout_s
         self.stagger_s = stagger_s
+        self.provider_factory = provider_factory
         self._stop = asyncio.Event()
+        self._wake = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._round_in_flight = False
         self._fetch_tasks: set[asyncio.Task[None]] = set()
 
@@ -72,6 +76,9 @@ class Poller:
             log.debug("fetch round already in flight — skipping this request")
             return
         self._round_in_flight = True
+        self._loop = asyncio.get_running_loop()
+        if self.provider_factory is not None:
+            self.providers = self.provider_factory()
         tasks = {
             asyncio.create_task(self._fetch_one(provider, index))
             for index, provider in enumerate(self.providers)
@@ -84,9 +91,10 @@ class Poller:
             # for its helper to terminate and reap the CLI child before its
             # cancellation completes, so a later round cannot overlap it.
             for task in tasks:
-                task.cancel()
+                if not task.cancelling():
+                    task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            if not self._stop.is_set():
+            if not self._stop.is_set() and not self._wake.is_set():
                 raise
         finally:
             self._fetch_tasks.difference_update(tasks)
@@ -94,19 +102,30 @@ class Poller:
 
     async def run(self) -> None:
         while True:
+            self._wake.clear()
             await self._run_round()
             if self._stop.is_set():
                 break
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self.interval_s)
+                await asyncio.wait_for(self._wake.wait(), timeout=self.interval_s)
             except asyncio.TimeoutError:
                 pass
 
     async def run_once(self) -> None:
         await self._run_round()
 
+    def request_refresh(self) -> None:
+        """Wake polling and cancel old fetches after a provider config change."""
+        def wake() -> None:
+            self._wake.set()
+            for task in tuple(self._fetch_tasks):
+                task.cancel()
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(wake)
+
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         # Cancelling a provider propagates into drive_screen_async(), which
         # terminates its helper and waits for the PTY child to be reaped.
         for task in tuple(self._fetch_tasks):

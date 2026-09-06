@@ -81,6 +81,25 @@ def test_tui_honors_usage_and_native_reset_preferences():
     _run(scenario, cfg)
 
 
+def test_tui_rebuilds_cards_after_provider_settings_change():
+    from aitop.config import with_enabled_providers
+
+    cfg = Config.defaults()
+    cfg.refresh_interval_s = 3600
+    async def scenario(app, pilot):
+        updated = with_enabled_providers(cfg, ['codex'])
+        cfg.providers, cfg.layout = updated.providers, updated.layout
+        await app._reload_provider_grid()
+        await pilot.pause()
+        assert [row.provider for row in app.query(SnapshotRow)] == ['codex']
+        updated = with_enabled_providers(cfg, [])
+        cfg.providers, cfg.layout = updated.providers, updated.layout
+        await app._reload_provider_grid()
+        await pilot.pause()
+        assert list(app.query(SnapshotRow)) == []
+    _run(scenario, cfg)
+
+
 def test_row_keeps_last_good_values_and_marks_stale_on_failure():
     # Spec §7: on failure the row is marked stale and keeps showing the last
     # good value instead of being blanked out by an ERROR line. Tested at the

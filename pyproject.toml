@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aitop"
-version = "0.1.0"
-description = "TUI dashboard for AI coding assistant usage limits"
+version = "1.0.0"
+description = "Terminal and web dashboard for AI coding assistant usage quotas"
 authors = [{name = "automaticdai"}]
 requires-python = ">=3.11"
 dependencies = [

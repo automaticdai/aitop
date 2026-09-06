@@ -20,6 +20,7 @@ rows = 2
 columns = 2
 
 [providers.claude]
+enabled = true
 position = [1, 1]
 timeout_s = 15
 
@@ -30,7 +31,8 @@ position = [1, 2]
 position = [2, 1]
 
 [providers.deepseek]
-position = [-1, -1]   # off
+enabled = false      # off, even with adaptive layout
+# api_key can be set in the web Menu; DEEPSEEK_API_KEY is the fallback.
 
 [web]
 enabled = false
@@ -51,10 +53,12 @@ columns = 2
 - `show_remaining` — show quota left in both interfaces by default. Set `false` to show usage.
 - `reset_countdown` — format session reset timers as `yh zm` and other windows as `xd yh zm` in both interfaces. Defaults to `true`; set `false` for vendor wording. Unknown reset notes are preserved. Countdown dates use the vendor timezone when supplied, otherwise the server timezone.
 - `[layout]` — the dashboard's grid. `rows` × `columns`. Defaults to a single column of 4 rows (the original vertical stack), so omitting this section changes nothing.
-  - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every configured built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
+  - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every enabled built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
   - `rows` — number of rows. Defaults to `4`.
   - `columns` — number of columns. Defaults to `1`.
 - `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`). Any provider omitted from the file keeps its defaults.
+  - `enabled` — whether to display and poll this provider. Defaults to `true`; `false` takes precedence over adaptive layout and positions. Menu switches apply immediately to the running poller and TUI. Turning a provider on restores a valid position and expands a fixed grid when necessary.
+  - `api_key` — DeepSeek only. A key saved through the Menu takes precedence over `DEEPSEEK_API_KEY`. Saving a key sets config permissions to `600`; API responses expose only whether a key is configured. Leave the Menu field blank to retain it; remove this config key manually to return to the environment variable.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
   - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. PTY adapters also cap normal captures at about 11 seconds; a lower configured timeout cancels and cleans up the helper and CLI child immediately.
 - `[web]` — the optional web view (off by default). When enabled, `aitop` also serves a live web page and JSON endpoint.

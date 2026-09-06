@@ -14,14 +14,16 @@ class DeepSeekProvider:
         self,
         base_url: str = "https://api.deepseek.com",
         transport: httpx.AsyncBaseTransport | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.base_url = base_url
         self._transport = transport
+        self._api_key = api_key
 
     async def fetch(self) -> UsageSnapshot:
-        key = os.environ.get("DEEPSEEK_API_KEY")
+        key = self._api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not key:
-            return UsageSnapshot(self.name, ok=False, error="DEEPSEEK_API_KEY is not set")
+            return UsageSnapshot(self.name, ok=False, error="Set a DeepSeek API key in Menu or DEEPSEEK_API_KEY")
         try:
             async with httpx.AsyncClient(timeout=15.0, transport=self._transport) as client:
                 resp = await client.get(
@@ -40,7 +42,7 @@ class DeepSeekProvider:
                 raw=data,
             )
         except Exception as exc:  # noqa: BLE001
-            return UsageSnapshot(self.name, ok=False, error=str(exc))
+            return UsageSnapshot(self.name, ok=False, error=str(exc).replace(key, "[redacted]"))
 
     @staticmethod
     def _parse_balance(data: dict) -> Balance | None:
