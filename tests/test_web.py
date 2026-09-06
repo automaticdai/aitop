@@ -194,7 +194,28 @@ def test_api_reset_countdown_keeps_original_note_and_stale_deadline(monkeypatch)
     data = TestClient(build_app(store)).get("/api/snapshots").json()[0]
     assert data["stale"] == "offline"
     assert data["daily"]["reset_note"] == "Reset in 2h 30m"
-    assert data["daily"]["reset_countdown"] == "Reset in 0d 1h 30m"
+    assert data["daily"]["reset_countdown"] == "Reset in 1h 30m"
+
+
+@pytest.mark.parametrize("provider,session_note", [
+    ("claude", "Reset in 2h 30m"),
+    ("codex", "Reset in 2h 30m"),
+    ("gemini", "Reset in 0d 2h 30m"),
+])
+def test_only_sessions_hide_days_in_both_interfaces(provider, session_note):
+    from aitop.render import QuotaDisplay, render_snapshot
+
+    quota = Quota(25, 100, "%", "Reset in 2h 30m")
+    snap = UsageSnapshot(provider, daily=quota, weekly=quota, monthly=quota,
+                         groups=[QuotaGroup("pool", daily=quota)])
+    data = snapshot_to_dict(snap)
+    assert data["daily"]["reset_countdown"] == session_note
+    assert data["weekly"]["reset_countdown"] == "Reset in 0d 2h 30m"
+    assert data["monthly"]["reset_countdown"] == "Reset in 0d 2h 30m"
+    assert data["groups"][0]["daily"]["reset_countdown"] == "Reset in 0d 2h 30m"
+    text = render_snapshot(snap, display=QuotaDisplay(True, True))
+    assert text.count("Reset in 0d 2h 30m") == (4 if provider == "gemini" else 3)
+    assert session_note in text
 
 
 def test_index_serves_html():

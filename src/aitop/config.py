@@ -220,6 +220,7 @@ def default_config_toml() -> str:
         "",
         f"refresh_interval_s = {cfg.refresh_interval_s:g}",
         f"show_remaining = {str(cfg.show_remaining).lower()}",
+        "# Session timers use yh zm; other windows use xd yh zm.",
         f"reset_countdown = {str(cfg.reset_countdown).lower()}",
         "",
         "[layout]",

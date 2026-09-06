@@ -29,6 +29,16 @@ def test_relative_countdown_uses_original_fetch_time_and_stops_at_zero():
     assert format_reset_note("Reset in 2h 30m", fetched_at=1000, now=20000) == "Reset in 0d 0h 0m"
 
 
+@pytest.mark.parametrize("note,expected", [
+    ("Reset in 2h 30m", "Reset in 2h 30m"),
+    ("Reset in 1d 2h 30m", "Reset in 26h 30m"),
+    ("Reset in 0m", "Reset in 0h 0m"),
+    ("resets soon", "resets soon"),
+])
+def test_session_format_uses_total_hours(note, expected):
+    assert format_reset_note(note, fetched_at=1000, now=1000, show_days=False) == expected
+
+
 @pytest.mark.parametrize("note,reference,expected", [
     ("Resets Sep 7, 5am (Europe/London)", "2026-09-05T04:00:00+00:00", "Reset in 2d 0h 0m"),
     ("resets 14:11 on 7 Sep (UTC)", "2026-09-05T12:00:00+00:00", "Reset in 2d 2h 11m"),

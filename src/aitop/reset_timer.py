@@ -27,7 +27,10 @@ _CODEX = re.compile(
 )
 
 
-def format_reset_note(note: str | None, *, fetched_at: float = 0, now: float | None = None) -> str | None:
+def format_reset_note(
+    note: str | None, *, fetched_at: float = 0, now: float | None = None,
+    show_days: bool = True,
+) -> str | None:
     """Show known reset times as 'Reset in 0d 2h 30m'; retain unknown text.
 
     Relative durations and omitted years are resolved at fetch time so stale
@@ -78,6 +81,9 @@ def format_reset_note(note: str | None, *, fetched_at: float = 0, now: float | N
         except (ValueError, OverflowError):
             return note
     total_minutes = max(0, math.ceil((deadline - now) / 60))
+    if not show_days:
+        hours, minutes = divmod(total_minutes, 60)
+        return f"Reset in {hours}h {minutes}m"
     days, minutes = divmod(total_minutes, 24 * 60)
     hours, minutes = divmod(minutes, 60)
     return f"Reset in {days}d {hours}h {minutes}m"

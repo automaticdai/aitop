@@ -2,7 +2,7 @@
 # Run: aitop --mock --config docs/screenshot_tui.toml
 refresh_interval_s = 30
 show_remaining = true
-reset_countdown = true
+reset_countdown = true # Sessions: yh zm; other windows: xd yh zm.
 
 [layout]
 adaptive = false

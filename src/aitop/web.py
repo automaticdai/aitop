@@ -43,7 +43,7 @@ def resolve_host(host: str) -> str:
     return host
 
 
-def _quota(q: Quota | None, fetched_at: float = 0) -> dict | None:
+def _quota(q: Quota | None, fetched_at: float = 0, *, show_reset_days: bool = True) -> dict | None:
     if q is None:
         return None
     pct = q.pct
@@ -52,7 +52,7 @@ def _quota(q: Quota | None, fetched_at: float = 0) -> dict | None:
         "limit": q.limit,
         "unit": q.unit,
         "reset_note": q.reset_note,
-        "reset_countdown": format_reset_note(q.reset_note, fetched_at=fetched_at),
+        "reset_countdown": format_reset_note(q.reset_note, fetched_at=fetched_at, show_days=show_reset_days),
         # pct/color/value/bar_pct are all computed (properties or helpers), not
         # dataclass fields, so asdict would drop them -- the frontend needs
         # them spelled out here. `value` and `bar_pct` keep the formatting and
@@ -78,7 +78,7 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
         "client_info": snap.client_info,
         "fetched_at": snap.fetched_at,
         "daily_label": daily_label(snap.provider),
-        "daily": _quota(snap.daily, snap.fetched_at),
+        "daily": _quota(snap.daily, snap.fetched_at, show_reset_days=daily_label(snap.provider) != "session"),
         "weekly": _quota(snap.weekly, snap.fetched_at),
         "monthly": _quota(snap.monthly, snap.fetched_at),
         "balance": (

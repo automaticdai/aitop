@@ -216,7 +216,7 @@ def _quota_cell(label: str, q: Quota, width: int | None = None, display: QuotaDi
         # ("Resets Aug 25, 5am (Europe/London)") and unlike the bar it can't
         # be shrunk -- so on a narrow card the note gives up its indent rather
         # than wrapping onto a second line.
-        note = (format_reset_note(q.reset_note, fetched_at=display.fetched_at)
+        note = (format_reset_note(q.reset_note, fetched_at=display.fetched_at, show_days=label != "session")
                 if display.reset_countdown else q.reset_note)
         indent = LABEL_WIDTH if width is None else max(0, min(LABEL_WIDTH, width - len(note)))
         lines.append((f"{'':<{indent}}{escape(note)}", indent + len(note)))
