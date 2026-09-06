@@ -44,11 +44,12 @@ def test_display_name_maps_internal_keys_to_shown_text():
         "codex": "Codex",
         "gemini": "Antigravity (agy)",
         "deepseek": "DeepSeek",
+        "copilot": "GitHub Copilot",
     }
 
 
 def test_logos_cover_every_known_provider():
-    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek"}
+    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek", "copilot"}
 
 
 def test_render_snapshot_prepends_the_provider_logo():

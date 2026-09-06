@@ -42,8 +42,17 @@ def format_reset_note(
     now = time.time() if now is None else now
     reference = fetched_at or now
     text = note.strip()
+    absolute = re.fullmatch(r"resets? (\d{4}-\d{2}-\d{2}T\S+)", text, re.I)
     duration = _DURATION.fullmatch(text)
-    if duration and any(duration.groups()):
+    if absolute:
+        try:
+            date = datetime.fromisoformat(absolute[1].replace("Z", "+00:00"))
+            if date.tzinfo is None:
+                return note
+            deadline = date.timestamp()
+        except (ValueError, OverflowError):
+            return note
+    elif duration and any(duration.groups()):
         days, hours, minutes = (int(v or 0) for v in duration.groups())
         deadline = reference + ((days * 24 + hours) * 60 + minutes) * 60
     else:

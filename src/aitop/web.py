@@ -53,6 +53,7 @@ def _quota(q: Quota | None, fetched_at: float = 0, *, show_reset_days: bool = Tr
         "used": q.used,
         "limit": q.limit,
         "unit": q.unit,
+        "unlimited": q.unlimited,
         "reset_note": q.reset_note,
         "reset_countdown": format_reset_note(q.reset_note, fetched_at=fetched_at, show_days=show_reset_days),
         # pct/color/value/bar_pct are all computed (properties or helpers), not
@@ -89,7 +90,8 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
             else None
         ),
         "groups": [
-            {"label": g.label, "daily": _quota(g.daily, snap.fetched_at), "weekly": _quota(g.weekly, snap.fetched_at)}
+            {"label": g.label, "daily": _quota(g.daily, snap.fetched_at), "weekly": _quota(g.weekly, snap.fetched_at),
+             "monthly": _quota(g.monthly, snap.fetched_at)}
             for g in (snap.groups or [])
         ],
     }
@@ -356,7 +358,7 @@ INDEX_HTML = """<!doctype html>
   .drag-handle:active { cursor: grabbing; }
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
-  @media (prefers-color-scheme: dark) { .provider-logo.codex { filter: invert(1); } }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -409,9 +411,21 @@ INDEX_HTML = """<!doctype html>
   .presets .button { font-weight: 500; padding: 7px 12px; }
   .settings .hint { margin: 12px 0 0; }
   .settings .validation { color: #c5221f; font-size: 13px; margin: 12px 0 0; }
-  .order-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .menu-tabs { display: flex; gap: 4px; padding: 4px; margin-bottom: 20px;
+               background: var(--bg); border: 1px solid var(--border); border-radius: 11px; }
+  .menu-tab { flex: 1; border: 0; border-radius: 7px; padding: 9px 12px;
+              background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .menu-tab[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 4px #00000014; }
+  .menu-section { margin-top: 0; }
+  .order-section { margin-top: 24px; }
   .order-section h3 { margin: 0; font-size: 13px; }
-  .settings .order-section p { margin: 4px 0 12px; font-size: 12px; }
+  .settings .menu-section p { margin: 4px 0 12px; font-size: 12px; }
+  .settings .provider-options { margin: 0 0 4px 12px; padding-left: 12px; border-left: 2px solid var(--border); }
+  .settings .provider-options:has(:disabled) { opacity: .55; }
+  .api-key-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+  .settings .api-key-row label { margin: 0; font-size: 12px; font-weight: 500; }
+  .settings .api-key-row input { padding: 7px 9px; font-size: 12px; }
+  .settings .provider-options p { margin: 5px 0 0; font-size: 11px; }
   .provider-order { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
   .provider-order li { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
                        background: var(--bg); border-radius: 8px; }
@@ -420,19 +434,22 @@ INDEX_HTML = """<!doctype html>
   .order-button { border: 1px solid var(--border); background: var(--card); color: var(--text);
                   border-radius: 6px; width: 30px; height: 30px; padding: 0; }
   .order-button:disabled { cursor: default; opacity: .3; }
-  .settings footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 28px; }
+  .settings .save-status { margin: 16px 0 0; font-size: 12px; }
+  #retry-settings { margin-top: 8px; }
   .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   .settings .toggle-setting { display: flex; justify-content: space-between; align-items: center;
                               gap: 20px; padding-top: 20px; margin: 24px 0 0; border-top: 1px solid var(--border); }
   .toggle-setting small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
   #provider-switches .toggle-setting { margin: 0; padding: 10px 0; border-top: 0; }
+  #provider-switches .provider-options .toggle-setting { padding: 4px 0; font-size: 12px; font-weight: 500; }
   .settings input[role="switch"] { appearance: none; flex-shrink: 0; width: 38px; height: 22px;
                                      padding: 2px; border: 0; border-radius: 12px; background: var(--muted); cursor: pointer; }
   .settings input[role="switch"]::after { content: ""; display: block; width: 18px; height: 18px;
                                           border-radius: 50%; background: white; }
   .settings input[role="switch"]:checked { background: #315cdb; }
   .settings input[role="switch"]:checked::after { transform: translateX(16px); }
-  .settings :disabled { cursor: wait; opacity: .65; }
+  .settings :disabled { cursor: not-allowed; opacity: .65; }
+  .settings .provider-options :disabled { opacity: 1; }
   .menu-about { display: flex; justify-content: space-between; align-items: center; gap: 16px;
                 border-top: 1px solid var(--border); margin-top: 24px; padding-top: 20px; font-size: 13px; }
   .menu-about p { margin: 0; }
@@ -476,20 +493,48 @@ INDEX_HTML = """<!doctype html>
       <header><h2 id="settings-title">Menu</h2>
         <button class="button quiet" id="close-settings" type="button" aria-label="Close menu">✕</button>
       </header>
-      <p class="muted" id="settings-description">Changes are saved to your aitop config and shared across browsers.</p>
-      <section class="order-section" aria-labelledby="providers-title">
-        <h3 id="providers-title">Providers</h3>
+      <p class="muted" id="settings-description">Changes save automatically and sync across browsers.</p>
+      <div class="menu-tabs" role="tablist" aria-label="Menu sections">
+        <button class="menu-tab" id="menu-tab-providers" type="button" role="tab"
+                aria-selected="true" aria-controls="menu-panel-providers">Providers</button>
+        <button class="menu-tab" id="menu-tab-layouts" type="button" role="tab" tabindex="-1"
+                aria-selected="false" aria-controls="menu-panel-layouts">Layouts</button>
+      </div>
+      <section class="menu-section" id="menu-panel-providers" role="tabpanel" aria-labelledby="menu-tab-providers">
         <p class="muted">Turn providers on or off. Disabled providers are not polled.</p>
-        <div id="provider-switches"></div>
+        <div id="provider-switches">
+          <div class="provider-setting">
+            <div id="provider-toggle-claude"></div>
+          </div>
+          <div class="provider-setting">
+            <div id="provider-toggle-codex"></div>
+          </div>
+          <div class="provider-setting">
+            <div id="provider-toggle-copilot"></div>
+          </div>
+          <div class="provider-setting">
+            <div id="provider-toggle-gemini"></div>
+            <div class="provider-options">
+              <label class="toggle-setting" for="show-claude-gpt">
+                <span>Claude &amp; GPT-OSS</span>
+                <input id="show-claude-gpt" type="checkbox" role="switch">
+              </label>
+            </div>
+          </div>
+          <div class="provider-setting">
+            <div id="provider-toggle-deepseek"></div>
+            <div class="provider-options">
+              <div class="api-key-row">
+                <label for="deepseek-api-key">API key</label>
+                <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set or replace key" aria-describedby="deepseek-key-hint">
+              </div>
+              <p class="muted" id="deepseek-key-hint"><span id="deepseek-key-status"></span> Leave blank to keep.</p>
+            </div>
+          </div>
+        </div>
       </section>
-      <section class="order-section" aria-labelledby="deepseek-title">
-        <h3 id="deepseek-title">DeepSeek</h3>
-        <p class="muted" id="deepseek-key-status"></p>
-        <label for="deepseek-api-key">API key</label>
-        <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
-               maxlength="512" placeholder="Paste a key to set or replace it" aria-describedby="deepseek-key-hint">
-        <p class="muted" id="deepseek-key-hint">Leave blank to keep the current key. Saved only on this machine.</p>
-      </section>
+      <section class="menu-section" id="menu-panel-layouts" role="tabpanel" aria-labelledby="menu-tab-layouts" hidden>
       <label for="layout-mode">Layout</label>
       <select id="layout-mode">
         <option value="adaptive">Fit to screen</option>
@@ -507,19 +552,15 @@ INDEX_HTML = """<!doctype html>
         </div>
       </div>
       <p class="muted hint" id="layout-hint"></p>
-      <section class="order-section" aria-labelledby="order-title">
+      <div class="order-section" role="group" aria-labelledby="order-title">
         <h3 id="order-title">Provider order</h3>
         <p class="muted">Move cards earlier or later in the grid.</p>
         <ol class="provider-order" id="provider-order"></ol>
+      </div>
       </section>
-      <label class="toggle-setting" for="show-claude-gpt">
-        <span>Claude &amp; GPT-OSS<small>Show this quota group in Antigravity.</small></span>
-        <input id="show-claude-gpt" type="checkbox" role="switch">
-      </label>
       <p class="validation" id="layout-error" role="alert" hidden></p>
-      <footer>
-        <button class="button primary" type="submit">Save settings</button>
-      </footer>
+      <p class="muted save-status" id="settings-save-status" role="status" hidden></p>
+      <button class="button" id="retry-settings" type="button" hidden>Retry</button>
       </fieldset>
     </form>
     <div class="menu-about">
@@ -540,6 +581,8 @@ INDEX_HTML = """<!doctype html>
     const orderList = document.getElementById("provider-order");
     const layoutStatus = document.getElementById("layout-status");
     const layoutError = document.getElementById("layout-error");
+    const saveStatus = document.getElementById("settings-save-status");
+    const retrySettings = document.getElementById("retry-settings");
     const apiKeyInput = document.getElementById("deepseek-api-key");
     let savedKeyConfigured = CONFIG.settings.deepseek_api_key_configured;
     const providerSwitches = document.getElementById("provider-switches");
@@ -548,6 +591,11 @@ INDEX_HTML = """<!doctype html>
     let latestData = [];
     let activeCells = CONFIG.cells;
     let saving = false;
+    let menuSaveTimer = null;
+    let pendingMenuPreferences = null;
+    let menuSavePromise = null;
+    let menuRevision = 0;
+    let menuDirty = false;
     let settingsGeneration = 0;
     let savedLayout = CONFIG.settings.layout;
     let savedShowClaudeGpt = CONFIG.settings.show_claude_gpt;
@@ -596,10 +644,35 @@ INDEX_HTML = """<!doctype html>
       if (valid) applyLayout(draft);
       return valid;
     }
+    function selectMenuTab(name, focus = false) {
+      for (const section of ['providers', 'layouts']) {
+        const tab = document.getElementById('menu-tab-' + section);
+        const selected = section === name;
+        tab.ariaSelected = String(selected);
+        tab.tabIndex = selected ? 0 : -1;
+        document.getElementById('menu-panel-' + section).hidden = !selected;
+        if (selected && focus) tab.focus();
+      }
+    }
+    for (const [index, name] of ['providers', 'layouts'].entries()) {
+      const tab = document.getElementById('menu-tab-' + name);
+      tab.addEventListener('click', () => selectMenuTab(name));
+      tab.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 'providers' : event.key === 'End' ? 'layouts'
+          : ['providers', 'layouts'][1 - index];
+        selectMenuTab(next, true);
+      });
+    }
+    for (const input of [rowsInput, columnsInput]) {
+      input.addEventListener('invalid', () => selectMenuTab('layouts'));
+    }
     function openSettings() {
       if (saving || dragState) return;
+      selectMenuTab('providers');
       apiKeyInput.value = "";
-      document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "An API key is configured." : "No API key configured.";
+      document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "Key configured." : "No key set.";
       providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
       renderProviderSwitches();
@@ -610,6 +683,8 @@ INDEX_HTML = """<!doctype html>
       columnsInput.value = initialColumns;
       rowsInput.value = savedLayout.rows;
       previewLayout();
+      saveStatus.hidden = true;
+      retrySettings.hidden = true;
       settings.showModal();
     }
     function restoreSettings() {
@@ -621,17 +696,50 @@ INDEX_HTML = """<!doctype html>
       renderOrderControls();
       applyLayout(savedLayout);
     }
-    async function saveLayout(layout) {
+    function menuPreferences(layout) {
       const preferences = {layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder, enabled_providers: providerNames};
       const key = apiKeyInput.value.trim();
-      if (key) preferences.deepseek_api_key = key;
-      return savePreferences(preferences, true);
+      if (key && !apiKeyInput.disabled) preferences.deepseek_api_key = key;
+      return preferences;
     }
-    async function savePreferences(preferences, fromMenu) {
+    function scheduleMenuSave(delay = 400) {
+      clearTimeout(menuSaveTimer);
+      menuRevision += 1;
+      settingsGeneration += 1;
+      menuDirty = true;
+      pendingMenuPreferences = null;
+      retrySettings.hidden = true;
+      saveStatus.hidden = false;
+      if (!previewLayout()) {
+        saveStatus.textContent = "Changes not saved. Check the layout.";
+        return;
+      }
+      pendingMenuPreferences = menuPreferences(draftLayout());
+      saveStatus.textContent = "Saving…";
+      menuSaveTimer = setTimeout(flushMenuSave, delay);
+    }
+    async function flushMenuSave() {
+      clearTimeout(menuSaveTimer);
+      if (saving) {
+        await menuSavePromise;
+        return pendingMenuPreferences ? flushMenuSave() : !menuDirty;
+      }
+      if (!pendingMenuPreferences) return !menuDirty;
+      const preferences = pendingMenuPreferences;
+      pendingMenuPreferences = null;
+      menuSavePromise = savePreferences(preferences, true, menuRevision);
+      await menuSavePromise;
+      return pendingMenuPreferences ? flushMenuSave() : !menuDirty;
+    }
+    async function closeSettings() {
+      if (await flushMenuSave()) settings.close();
+      else if (!validLayout(draftLayout())) selectMenuTab('layouts', true);
+    }
+    async function savePreferences(preferences, fromMenu, revision) {
       if (saving) return;
       saving = true;
       settingsGeneration += 1;
-      settingsFields.disabled = true;
+      settingsFields.disabled = !fromMenu;
       layoutError.hidden = true;
       try {
         const response = await fetch("/api/settings", {
@@ -646,13 +754,23 @@ INDEX_HTML = """<!doctype html>
         savedOrder = data.provider_order;
         savedEnabled = data.enabled_providers;
         savedKeyConfigured = data.deepseek_api_key_configured;
-        restoreSettings();
+        if (fromMenu) {
+          document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "Key configured." : "No key set.";
+          if (revision === menuRevision) {
+            menuDirty = false;
+            saveStatus.textContent = "Saved";
+            if (preferences.deepseek_api_key) apiKeyInput.value = "";
+          }
+        } else restoreSettings();
         layoutStatus.textContent = fromMenu ? "Settings saved to config." : "Card order saved to config.";
-        if (fromMenu) settings.close();
       } catch (e) {
         if (fromMenu) {
-          layoutError.hidden = false;
-          layoutError.textContent = e.message || "Could not save settings. Try again.";
+          if (revision === menuRevision) {
+            saveStatus.textContent = "Changes not saved.";
+            layoutError.hidden = false;
+            layoutError.textContent = e.message || "Could not save settings. Try again.";
+            retrySettings.hidden = false;
+          }
         } else {
           restoreSettings();
           layoutStatus.textContent = "Could not save card order: " + e.message;
@@ -666,20 +784,26 @@ INDEX_HTML = """<!doctype html>
       modeInput.value = "custom";
       columnsInput.value = columns;
       rowsInput.value = Math.max(1, Math.ceil(providerNames.length / columns));
-      previewLayout();
+      scheduleMenuSave(0);
     }
     function renderProviderSwitches() {
-      providerSwitches.innerHTML = Object.keys(CONFIG.display_names).map(name =>
+      Object.keys(CONFIG.display_names).forEach(name => {
+        document.getElementById('provider-toggle-' + name).innerHTML =
         '<label class="toggle-setting" for="provider-' + name + '"><span>' +
         esc(CONFIG.display_names[name]) + '</span><input id="provider-' + name +
         '" data-provider="' + name + '" type="checkbox" role="switch"' +
-        (providerNames.includes(name) ? ' checked' : '') + '></label>'
-      ).join('');
+        (providerNames.includes(name) ? ' checked' : '') + '></label>';
+      });
+      updateProviderOptions();
+    }
+    function updateProviderOptions() {
+      groupInput.disabled = !providerNames.includes('gemini');
+      apiKeyInput.disabled = !providerNames.includes('deepseek');
     }
     providerSwitches.addEventListener('change', event => {
       const input = event.target;
       const name = input.dataset.provider;
-      if (!name || saving) return;
+      if (!name) return;
       if (input.checked) {
         if (!providerNames.includes(name)) providerNames.push(name);
         if (!activeOrder.includes(name)) activeOrder.push(name);
@@ -687,11 +811,12 @@ INDEX_HTML = """<!doctype html>
         providerNames = providerNames.filter(provider => provider !== name);
         activeOrder = activeOrder.filter(provider => provider !== name);
       }
+      updateProviderOptions();
       if (modeInput.value === 'custom' && Number(columnsInput.value) >= 1) {
         rowsInput.value = Math.max(Number(rowsInput.value), Math.ceil(providerNames.length / Number(columnsInput.value)));
       }
       renderOrderControls();
-      previewLayout();
+      scheduleMenuSave(0);
     });
     function renderOrderControls() {
       orderList.innerHTML = activeOrder.map((name, index) => {
@@ -713,12 +838,11 @@ INDEX_HTML = """<!doctype html>
       return next;
     }
     function moveInMenu(name, direction) {
-      if (saving) return;
       const index = activeOrder.indexOf(name), target = index + direction;
       if (index < 0 || target < 0 || target >= activeOrder.length) return;
       activeOrder = reordered(activeOrder, name, activeOrder[target]);
       renderOrderControls();
-      previewLayout();
+      scheduleMenuSave(0);
       const button = orderList.querySelector('[data-provider="' + name + '"][data-direction="' + direction + '"]:not(:disabled)') ||
         orderList.querySelector('[data-provider="' + name + '"]:not(:disabled)');
       button?.focus();
@@ -806,17 +930,20 @@ INDEX_HTML = """<!doctype html>
       cards.querySelector('.drag-handle[data-provider="' + handle.dataset.provider + '"]')?.focus();
     });
     document.getElementById("open-settings").addEventListener("click", openSettings);
-    document.getElementById("close-settings").addEventListener("click", () => settings.close());
+    document.getElementById("close-settings").addEventListener("click", closeSettings);
     settings.addEventListener("close", restoreSettings);
-    settings.addEventListener("cancel", event => { if (saving) event.preventDefault(); });
+    settings.addEventListener("cancel", event => { event.preventDefault(); closeSettings(); });
     document.getElementById("layout-form").addEventListener("submit", async event => {
       event.preventDefault();
-      if (previewLayout()) await saveLayout(draftLayout());
+      scheduleMenuSave(0);
+      await flushMenuSave();
     });
-    modeInput.addEventListener("change", previewLayout);
-    rowsInput.addEventListener("input", previewLayout);
-    columnsInput.addEventListener("input", previewLayout);
-    groupInput.addEventListener("change", previewLayout);
+    modeInput.addEventListener("change", () => scheduleMenuSave(0));
+    rowsInput.addEventListener("input", () => scheduleMenuSave());
+    columnsInput.addEventListener("input", () => scheduleMenuSave());
+    groupInput.addEventListener("change", () => scheduleMenuSave(0));
+    apiKeyInput.addEventListener("input", () => scheduleMenuSave(600));
+    retrySettings.addEventListener("click", () => scheduleMenuSave(0));
     document.getElementById("preset-stack").addEventListener("click", () => preset(1));
     document.getElementById("preset-two").addEventListener("click", () => preset(2));
     document.getElementById("preset-row").addEventListener("click", () => preset(Math.max(1, providerNames.length)));
@@ -827,6 +954,8 @@ INDEX_HTML = """<!doctype html>
       ));
     }
     function quotaRow(label, q) {
+      if (q.unlimited) return '<div class="quota"><div class="quota-head"><span class="label">' +
+        esc(label) + '</span><span class="value">Unlimited</span></div></div>';
       const color = COLORS[q.color] || COLORS.dim;
       const value = CONFIG.show_remaining ? q.remaining_value : q.value;
       const width = CONFIG.show_remaining ? q.remaining_bar_pct : q.bar_pct;
@@ -866,6 +995,7 @@ INDEX_HTML = """<!doctype html>
           body += '<div class="group">' + (hideTitle ? '' : '<div class="group-label">' + esc(g.label) + '</div>');
           if (g.daily) body += quotaRow("daily", g.daily);
           if (g.weekly) body += quotaRow("weekly", g.weekly);
+          if (g.monthly) body += quotaRow("monthly", g.monthly);
           body += "</div>";
         });
         body += "</div>";
@@ -922,7 +1052,7 @@ INDEX_HTML = """<!doctype html>
         const [res, prefs] = await Promise.all([fetch("/api/snapshots"), fetch("/api/settings")]);
         if (!res.ok || !prefs.ok) throw new Error("dashboard request failed");
         const [data, preferences] = await Promise.all([res.json(), prefs.json()]);
-        if (!saving && !dragState && generation === settingsGeneration) {
+        if (!saving && !menuDirty && !settings.open && !dragState && generation === settingsGeneration) {
           savedLayout = preferences.layout;
           savedShowClaudeGpt = preferences.show_claude_gpt;
           savedOrder = preferences.provider_order;

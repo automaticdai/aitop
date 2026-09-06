@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..config import Config, place_providers
 from .claude import ClaudeProvider
 from .codex import CodexProvider
+from .copilot import CopilotProvider
 from .deepseek import DeepSeekProvider
 from .gemini import GeminiProvider
 from .mock import MockProvider
@@ -21,6 +22,8 @@ def build_providers(config: Config, mock: bool = False) -> list:
             provider = DeepSeekProvider(api_key=config.providers[name].api_key)
         elif name == "codex":
             provider = CodexProvider()
+        elif name == "copilot":
+            provider = CopilotProvider()
         elif name == "gemini":
             provider = GeminiProvider()
         elif name == "claude":

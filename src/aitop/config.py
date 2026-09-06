@@ -15,7 +15,7 @@ import tomlkit
 # (where "current working directory" no longer means "the project folder").
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
-PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek")
+PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot")
 
 
 class ConfigError(ValueError):
@@ -114,7 +114,7 @@ class Config:
 
     @classmethod
     def defaults(cls) -> "Config":
-        return cls(providers={name: ProviderConfig() for name in PROVIDER_NAMES})
+        return cls(providers={name: ProviderConfig(enabled=name != "copilot") for name in PROVIDER_NAMES})
 
 
 def place_providers(
@@ -137,7 +137,7 @@ def place_providers(
         # Polling happens before the TUI has a terminal size. Give every
         # configured built-in provider a cell so none are skipped merely
         # because the fixed-grid values are deliberately irrelevant here.
-        rows = max(1, sum(name in config.providers for name in PROVIDER_NAMES))
+        rows = max(1, sum(pc.enabled for name, pc in config.providers.items() if name in PROVIDER_NAMES))
         columns = 1
     else:
         rows = config.layout.rows if rows is None else rows
@@ -153,7 +153,7 @@ def place_providers(
         pc = config.providers.get(name)
         if pc is None or not pc.enabled:
             # Absent from the providers dict at all (only possible with a
-            # hand-built Config, since defaults()/load_config() seed all four)
+            # hand-built Config, since defaults()/load_config() seed all providers)
             # -- treated as off.
             continue
         if config.layout.adaptive:
@@ -192,7 +192,7 @@ def layout_cells(
 ) -> list[str | None]:
     """Row-major list of provider names for every grid cell (None = blank)."""
     if config.layout.adaptive and rows is None and columns is None:
-        rows = max(1, sum(name in config.providers for name in PROVIDER_NAMES))
+        rows = max(1, sum(pc.enabled for name, pc in config.providers.items() if name in PROVIDER_NAMES))
         columns = 1
     else:
         rows = config.layout.rows if rows is None else rows
@@ -247,12 +247,15 @@ def default_config_toml() -> str:
         "",
     ]
     for name in PROVIDER_NAMES:
-        r, c = placement[name]
         lines.append(f"[providers.{name}]")
-        lines.append("enabled = true")
+        lines.append(f"enabled = {str(cfg.providers[name].enabled).lower()}")
         if name == "deepseek":
             lines.append("# Set api_key through the web Menu, or use DEEPSEEK_API_KEY.")
-        lines.append(f"position = [{r}, {c}]")
+        if name == "copilot":
+            lines.append("# Enable after gh auth login, or set COPILOT_GITHUB_TOKEN.")
+        if name in placement:
+            r, c = placement[name]
+            lines.append(f"position = [{r}, {c}]")
         lines.append("")
     return "\n".join(lines)
 

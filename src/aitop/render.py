@@ -39,6 +39,7 @@ DISPLAY_NAME = {
     "codex": "Codex",
     "gemini": "Antigravity (agy)",
     "deepseek": "DeepSeek",
+    "copilot": "GitHub Copilot",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -91,6 +92,7 @@ LOGOS = {
         "GOOGLE", colors=["#4285F4", "#EA4335", "#FBBC05", "#4285F4", "#34A853", "#EA4335"]
     ),
     "deepseek": f"[#4D6BFE]{_text_art('DEEPSEEK')}[/]",  # DeepSeek blue
+    "copilot": f"[#A78BFA]{_text_art('COPILOT')}[/]",
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -103,6 +105,7 @@ LOGO_WIDTH = {
     "codex": 5 * len("OPENAI") - 1,
     "gemini": 5 * len("GOOGLE") - 1,
     "deepseek": 5 * len("DEEPSEEK") - 1,
+    "copilot": 5 * len("COPILOT") - 1,
 }
 
 
@@ -159,6 +162,8 @@ def format_quota_value(q: Quota) -> str:
     used/limit is genuinely informative there. Returns plain text; callers
     apply their own escaping (Textual markup vs HTML).
     """
+    if q.unlimited:
+        return "Unlimited"
     if q.unit == "%":
         return fmt_pct(q.pct)
     return f"{q.used:.0f}/{q.limit:.0f} {q.unit} ({fmt_pct(q.pct)})"
@@ -188,6 +193,8 @@ def remaining_pct(q: Quota) -> float | None:
 
 
 def format_remaining_value(q: Quota) -> str:
+    if q.unlimited:
+        return "Unlimited"
     pct = remaining_pct(q)
     if pct is None:
         return "Remaining unknown"
@@ -208,7 +215,7 @@ def _quota_cell(label: str, q: Quota, width: int | None = None, display: QuotaDi
     color = bar_color(q.pct)
     value = format_remaining_value(q) if display.show_remaining else format_quota_value(q)
     pct = remaining_pct(q) if display.show_remaining else q.pct
-    bar = render_bar(pct, _fit_bar(width, value))
+    bar = "" if q.unlimited else render_bar(pct, _fit_bar(width, value))
     head = f"{label:<{LABEL_WIDTH}}{bar} {value}"
     lines = [(f"{label:<{LABEL_WIDTH}}[{color}]{bar}[/{color}] {escape(value)}", len(head))]
     if q.reset_note:
@@ -253,6 +260,10 @@ def _group_cell(group: QuotaGroup, width: int | None = None, display: QuotaDispl
         if group.daily is not None:
             lines.append(("", 0))
         lines.extend(_quota_cell("weekly", group.weekly, width, display))
+    if group.monthly is not None:
+        if group.daily is not None or group.weekly is not None:
+            lines.append(("", 0))
+        lines.extend(_quota_cell("monthly", group.monthly, width, display))
     return lines
 
 

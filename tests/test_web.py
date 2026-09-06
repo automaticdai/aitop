@@ -34,6 +34,22 @@ def test_snapshot_to_dict_serializes_monthly_window():
     assert d["monthly"]["value"] == "5.0%"
 
 
+def test_copilot_monthly_groups_render_in_browser():
+    import asyncio
+    from aitop.providers.mock import MockProvider
+
+    config = Config.defaults()
+    config.providers["copilot"].enabled = True
+    config.layout.adaptive = True
+    snap = asyncio.run(MockProvider("copilot").fetch())
+    rendered = _render_in_js(config, [snapshot_to_dict(snap)], "openSettings();")
+    assert "GitHub Copilot" in rendered["html"]
+    assert "Premium requests" in rendered["html"]
+    assert "75.0% left" in rendered["html"]
+    assert rendered["html"].count("Unlimited") == 2
+    assert "GitHub Copilot" in rendered["orderHtml"]
+
+
 def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
     snap = UsageSnapshot("claude", daily=Quota(25, 100, "%"))
     d = snapshot_to_dict(snap)
@@ -46,6 +62,7 @@ def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
         "used": 25,
         "limit": 100,
         "unit": "%",
+        "unlimited": False,
         "reset_note": None,
         "reset_countdown": None,
         "pct": 25.0,
@@ -333,6 +350,7 @@ function element(id) {
     addEventListener(name, fn) { this.listeners[name] = fn; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
+    focus() {},
     showModal() { this.open = true; },
     close() { this.open = false; if (this.listeners.close) this.listeners.close(); },
   };
@@ -350,6 +368,7 @@ const context = vm.createContext({
       ? {error: input.api_error} : {enabled_providers: input.enabled_providers, ...JSON.parse(options.body)}});
   },
   setInterval: (fn, ms) => { interval = ms; },
+  setTimeout: () => 1, clearTimeout: () => {},
 });
 (async () => {
 vm.runInContext(input.script, context);
@@ -410,7 +429,7 @@ def test_grid_settings_save_reload_and_switch_to_adaptive():
       openSettings(); preset(2);
       await document.getElementById('layout-form').listeners.submit({preventDefault() {}});
     """)
-    assert saved["open"] is False
+    assert saved["open"] is True
     assert json.loads(saved["writes"][0]["body"]) == {
         "layout": {"mode": "custom", "rows": 2, "columns": 2}, "show_claude_gpt": True,
         "provider_order": ["claude", "codex", "gemini", "deepseek"],
@@ -430,13 +449,14 @@ def test_grid_settings_save_reload_and_switch_to_adaptive():
     assert reset["style"]["gridTemplateColumns"] == ""
 
 
-def test_grid_preview_cancel_restores_config_positions():
+def test_closing_menu_flushes_pending_grid_changes():
     rendered = _render_in_js(_fixed_config(), [], """
-      openSettings(); preset(1); document.getElementById('close-settings').listeners.click();
+      openSettings(); preset(1); await document.getElementById('close-settings').listeners.click();
     """)
-    assert rendered["html"].count('class="empty-cell"') == 4
-    assert rendered["style"]["gridTemplateColumns"] == "repeat(3, minmax(0, 1fr))"
-    assert rendered["writes"] == []
+    assert rendered["html"].count('class="empty-cell"') == 0
+    assert rendered["style"]["gridTemplateColumns"] == "repeat(1, minmax(0, 1fr))"
+    assert len(rendered["writes"]) == 1
+    assert rendered["open"] is False
 
 
 def test_grid_settings_reject_too_few_cells():
@@ -457,18 +477,19 @@ def test_small_saved_layout_falls_back_when_more_providers_are_enabled():
     assert rendered["style"]["gridTemplateColumns"] == ""
 
 
-def test_settings_save_failure_keeps_dialog_open_and_cancel_restores_config():
+def test_autosave_failure_keeps_dialog_and_unsaved_changes_open():
     rendered = _render_in_js(Config.defaults(), [], """
-      openSettings(); preset(2); await saveLayout(draftLayout());
+      openSettings(); preset(2); await flushMenuSave();
     """, api_error="Config is read-only")
     assert rendered["style"]["gridTemplateColumns"] == "repeat(2, minmax(0, 1fr))"
     assert rendered["open"] is True
     assert rendered["error"] == "Config is read-only"
     assert rendered["status"] == ""
     cancelled = _render_in_js(Config.defaults(), [], """
-      openSettings(); preset(2); await saveLayout(draftLayout()); settings.close();
+      openSettings(); preset(2); await flushMenuSave(); await closeSettings();
     """, api_error="Config is read-only")
-    assert cancelled["style"]["gridTemplateColumns"] == ""
+    assert cancelled["style"]["gridTemplateColumns"] == "repeat(2, minmax(0, 1fr))"
+    assert cancelled["open"] is True
 
 
 def test_grid_adaptive_override_keeps_disabled_providers_hidden():
@@ -480,16 +501,66 @@ def test_grid_adaptive_override_keeps_disabled_providers_hidden():
     assert 'class="empty-cell"' not in rendered["html"]
 
 
-def test_menu_order_previews_saves_and_cancels():
+def test_menu_order_autosaves_and_flushes_on_close():
     cfg = Config.defaults()
     previewed = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1);")
     for html in (previewed["html"], previewed["orderHtml"]):
         assert html.index('DeepSeek') < html.index('Antigravity')
     assert previewed["writes"] == []
-    cancelled = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); settings.close();")
-    assert cancelled["html"].index('Antigravity') < cancelled["html"].index('DeepSeek')
-    saved = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); await saveLayout(draftLayout());")
+    cancelled = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); await closeSettings();")
+    assert cancelled["html"].index('DeepSeek') < cancelled["html"].index('Antigravity')
+    assert len(cancelled["writes"]) == 1
+    saved = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); await flushMenuSave();")
     assert json.loads(saved["writes"][0]["body"])["provider_order"] == ["claude", "codex", "deepseek", "gemini"]
+
+
+def test_autosave_queues_latest_changes_while_a_request_is_running():
+    rendered = _render_in_js(Config.defaults(), [], """
+      openSettings();
+      const originalFetch = fetch;
+      let release, requests = 0;
+      fetch = (...args) => requests++ === 0
+        ? new Promise(resolve => { release = () => resolve(originalFetch(...args)); })
+        : originalFetch(...args);
+      groupInput.checked = false;
+      groupInput.listeners.change();
+      const firstSave = flushMenuSave();
+      providerSwitches.listeners.change({target: {dataset: {provider: 'deepseek'}, checked: false}});
+      preset(2);
+      release();
+      await firstSave;
+      await closeSettings();
+    """)
+    writes = [json.loads(write["body"]) for write in rendered["writes"]]
+    assert len(writes) == 2
+    assert writes[0]["show_claude_gpt"] is False
+    assert "deepseek" in writes[0]["enabled_providers"]
+    assert "deepseek" not in writes[1]["enabled_providers"]
+    assert writes[1]["layout"] == {"mode": "custom", "rows": 2, "columns": 2}
+    assert rendered["open"] is False
+
+
+def test_autosave_debounces_key_edits_and_flushes_on_close():
+    rendered = _render_in_js(Config.defaults(), [], """
+      openSettings();
+      apiKeyInput.value = 'test-partial'; apiKeyInput.listeners.input();
+      apiKeyInput.value = 'test-complete-key'; apiKeyInput.listeners.input();
+      await closeSettings();
+    """)
+    assert len(rendered["writes"]) == 1
+    assert json.loads(rendered["writes"][0]["body"])["deepseek_api_key"] == "test-complete-key"
+    assert rendered["open"] is False
+
+
+def test_invalid_layout_does_not_queue_a_save_or_close_the_menu():
+    rendered = _render_in_js(Config.defaults(), [], """
+      openSettings(); preset(2);
+      columnsInput.value = ''; columnsInput.listeners.input();
+      await closeSettings();
+    """)
+    assert rendered["writes"] == []
+    assert rendered["errorHidden"] is False
+    assert rendered["open"] is True
 
 
 def test_card_reorder_saves_immediately_and_rolls_back_on_failure():
@@ -522,7 +593,7 @@ def test_saved_order_is_used_by_cards_and_menu_in_custom_grid():
     assert rendered["html"].count('class="empty-cell"') == 2
 
 
-def test_group_toggle_hides_only_antigravity_claude_gpt_and_can_be_cancelled():
+def test_group_toggle_autosaves_and_survives_menu_close():
     data = [snapshot_to_dict(UsageSnapshot("gemini", groups=[
         QuotaGroup("Gemini", daily=Quota(10, 100, "%")),
         QuotaGroup("Claude & GPT-OSS", daily=Quota(20, 100, "%")),
@@ -537,17 +608,21 @@ def test_group_toggle_hides_only_antigravity_claude_gpt_and_can_be_cancelled():
     previewed = _render_in_js(cfg, data, "openSettings(); groupInput.checked = true; previewLayout();")
     assert "GPT-OSS" in previewed["html"]
     assert 'class="group-label">Gemini</div>' in previewed["html"]
-    cancelled = _render_in_js(cfg, data, "openSettings(); groupInput.checked = true; previewLayout(); settings.close();")
-    assert "GPT-OSS" not in cancelled["html"]
+    cancelled = _render_in_js(cfg, data, "openSettings(); groupInput.checked = true; groupInput.listeners.change(); await closeSettings();")
+    assert "GPT-OSS" in cancelled["html"]
+    assert json.loads(cancelled["writes"][0]["body"])["show_claude_gpt"] is True
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot"])
 def test_provider_logos_are_served_locally_and_in_loading_cards(provider):
     client = TestClient(build_app(SnapshotStore()))
     response = client.get(f"/logos/{provider}.svg")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/svg+xml"
-    rendered = _render_in_js(Config.defaults(), [snapshot_to_dict(UsageSnapshot(provider))])
+    config = Config.defaults()
+    config.layout.adaptive = True
+    config.providers[provider].enabled = True
+    rendered = _render_in_js(config, [snapshot_to_dict(UsageSnapshot(provider))])
     for html in (rendered["loading"], rendered["html"]):
         assert f'src="/logos/{provider}.svg"' in html
     assert client.get("/logos/unknown.svg").status_code == 404

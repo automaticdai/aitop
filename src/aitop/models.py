@@ -10,10 +10,11 @@ class Quota:
     limit: float
     unit: str  # "messages" | "hours" | "tokens" | "%"
     reset_note: str | None = None  # vendor-native reset text, e.g. "resets 14:11 on 27 Aug"
+    unlimited: bool = False
 
     @property
     def pct(self) -> float | None:
-        if self.limit <= 0:
+        if self.unlimited or self.limit <= 0:
             return None
         return round(self.used / self.limit * 100, 1)
 
@@ -40,6 +41,7 @@ class QuotaGroup:
     label: str
     daily: Quota | None = None
     weekly: Quota | None = None
+    monthly: Quota | None = None
 
 
 @dataclass

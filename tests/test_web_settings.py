@@ -212,6 +212,29 @@ def test_provider_switches_persist_and_reenable_legacy_hidden_cards(tmp_path):
     assert config_module.place_providers(load_config(path)) == {}
 
 
+def test_copilot_toggle_is_persistent_and_notifies_poller(tmp_path):
+    path = tmp_path / "config.toml"
+    config = load_config(path)
+    notified = []
+    client = TestClient(build_app(SnapshotStore(), config, on_provider_change=lambda: notified.append(True)))
+    token = json.loads(re.search(r"const CONFIG = (.*);", client.get("/").text).group(1))["settings_token"]
+    prefs = client.get("/api/settings").json()
+    assert "copilot" not in prefs["enabled_providers"]
+    payload = {"layout": {"mode": "adaptive", "rows": 2, "columns": 3}, "show_claude_gpt": True,
+               "enabled_providers": prefs["enabled_providers"] + ["copilot"],
+               "provider_order": prefs["provider_order"] + ["copilot"]}
+    response = client.put("/api/settings", json=payload, headers={"X-Aitop-Token": token})
+    assert response.status_code == 200
+    assert "copilot" in response.json()["enabled_providers"]
+    assert load_config(path).providers["copilot"].enabled
+    assert notified == [True]
+    payload["enabled_providers"].remove("copilot")
+    payload["provider_order"].remove("copilot")
+    assert client.put("/api/settings", json=payload, headers={"X-Aitop-Token": token}).status_code == 200
+    assert not load_config(path).providers["copilot"].enabled
+    assert notified == [True, True]
+
+
 @pytest.mark.parametrize('enabled', [None, False, 'codex', ['unknown'], ['codex', 'codex'], [1]])
 def test_invalid_provider_switches_never_write_config(tmp_path, enabled):
     path = tmp_path / 'config.toml'

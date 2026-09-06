@@ -1,3 +1,6 @@
 Provider logos from https://github.com/lobehub/lobe-icons (MIT).
 packages/static-svg/icons/{claude-color,codex,antigravity-color,deepseek-color}.svg
 Downloaded 2026-09-05. Logos are trademarks of their respective owners.
+
+copilot.svg: packages/static-svg/icons/githubcopilot.svg from the same collection.
+Downloaded 2026-09-06. Covered by the same MIT license in LICENSE.txt.

@@ -1,8 +1,8 @@
 # aitop
 
-Monitor **Claude Code, Codex, Antigravity (agy), and DeepSeek** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
+Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), and DeepSeek** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
-See the [v1.0 release notes](CHANGELOG.md) for highlights and upgrade instructions.
+See the [v1.0.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
 ## Install
 
@@ -49,7 +49,7 @@ Open **http://localhost:8787**. The web server is off by default.
 
 - **Menu:** turn providers on/off, set a DeepSeek API key, choose a grid, and reorder cards. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
 - **Drag cards** to reorder and save immediately. Grips support touch and arrow keys.
-- **Save settings** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Closing the Menu cancels its preview.
+- **Automatic saving** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Changes save as you make them; closing the Menu finishes pending saves. If saving fails, the Menu shows an error and a Retry button.
 
 The dashboard refreshes at the configured interval; `/api/snapshots` provides the data as JSON. Hover over a reset timer to see its original note. Reload the page after restarting the service before saving settings.
 
@@ -65,8 +65,11 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | Codex | `codex` on `PATH`, already logged in | CLI `/status` |
 | Antigravity | `agy` CLI on `PATH`, already logged in | CLI `/usage`, including both quota groups |
 | DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
+| GitHub Copilot | `gh auth login`, or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | HTTPS account quotas |
 
 Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek shows an account balance rather than a quota bar.
+
+Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
 
 CLI data is parsed from terminal output. Expired logins or changes to vendor screens may produce **no data**. Reopen the relevant CLI and check its login and usage screen; aitop does not log in or refresh credentials for you.
 

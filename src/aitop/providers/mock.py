@@ -25,6 +25,12 @@ class MockProvider:
             return UsageSnapshot(self.name, balance=Balance(225.05, "CNY"))
         if self.name == "gemini":
             return UsageSnapshot(self.name, groups=_MOCK_GEMINI_GROUPS)
+        if self.name == "copilot":
+            return UsageSnapshot(self.name, client_info="GitHub Copilot", groups=[
+                QuotaGroup("Premium requests", monthly=Quota(25, 100, "%", "Reset in 12d 6h 0m")),
+                QuotaGroup("Chat", monthly=Quota(0, 0, "%", unlimited=True)),
+                QuotaGroup("Completions", monthly=Quota(0, 0, "%", unlimited=True)),
+            ])
         # A config file naming a provider this table doesn't know about (a
         # typo, or a name added to config ahead of an adapter) must surface as
         # an ordinary failed snapshot, not a KeyError escaping into the poll

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.0.1 — 2026-09-06
+
+- Add GitHub Copilot account quotas using an existing GitHub CLI login or environment token, with monthly pools, unlimited allowances, and reset countdowns in both interfaces.
+- Add a Copilot provider switch, logo, mock data, and setup documentation. Copilot is off by default to preserve existing layouts.
+- Split the Menu into Providers and Layouts tabs, keeping layout and ordering together.
+- Nest compact Claude & GPT-OSS and API key controls under Antigravity and DeepSeek; disable each sub-option when its provider is off.
+- Save Menu changes automatically, queue edits made during a save, and finish pending saves before closing. Show errors with a Retry button when saving fails.
+
+Upgrade the package, restart aitop, and reload the browser. Enable Copilot under **Menu → Providers** after authenticating GitHub on the machine running aitop.
+
 ## v1.0 — 2026-09-06
 
 First stable release. Python package version: **1.0.0**.
