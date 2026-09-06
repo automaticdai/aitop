@@ -3,6 +3,7 @@ from __future__ import annotations
 from ..models import Balance, Quota, QuotaGroup, UsageSnapshot
 
 _MOCK_QUOTAS: dict[str, tuple[Quota, Quota]] = {
+    "glm": (Quota(24, 100, "%", "Reset in 2h 30m"), Quota(15, 100, "%", "Reset in 4d 2h 0m")),
     "claude": (Quota(2.5, 5.0, "hours", "Reset in 2h 30m"), Quota(9.0, 25.0, "hours", "Reset in 97h 24m")),
     "codex": (Quota(12, 50, "messages", "Reset in 3h 15m"), Quota(30, 200, "messages", "Reset in 120h 10m")),
 }

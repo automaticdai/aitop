@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add GLM Coding Plan quota monitoring for Z.ai and BigModel accounts.
+- Report GLM account errors clearly and replace outdated dashboard errors when no valid usage was fetched.
+- Add compact, automatically saved API key and region controls, disabled when their provider is off. GLM is opt-in.
+
 ## v1.0.1 — 2026-09-06
 
 - Add GitHub Copilot account quotas using an existing GitHub CLI login or environment token, with monthly pools, unlimited allowances, and reset countdowns in both interfaces.

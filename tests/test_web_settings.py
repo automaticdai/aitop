@@ -18,7 +18,7 @@ PREFERENCES = {
 }
 
 
-EXPECTED_PREFS = {**PREFERENCES, "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY"))}
+EXPECTED_PREFS = {**PREFERENCES, "glm_api_key_configured": bool(os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY"))}
 
 def _client(path):
     client = TestClient(build_app(SnapshotStore(), load_config(path)))
@@ -307,3 +307,47 @@ def test_failed_deepseek_save_keeps_old_key_and_permissions(tmp_path, monkeypatc
     assert path.read_text() == before
     assert path.stat().st_mode == mode
     assert load_config(path).providers['deepseek'].api_key is None
+
+
+@pytest.mark.parametrize("name", ["glm"])
+def test_regional_provider_settings_persist_privately_and_reconfigure(tmp_path, name):
+    path = tmp_path / "config.toml"
+    config = load_config(path)
+    changed = []
+    client = TestClient(build_app(SnapshotStore(), config, on_provider_change=lambda: changed.append(True)))
+    page = client.get('/').text
+    token = json.loads(re.search(r"const CONFIG = (.*);", page).group(1))["settings_token"]
+    headers = {"X-Aitop-Token": token}
+    payload = {**PREFERENCES, "layout": {"mode": "adaptive", "rows": 2, "columns": 2},
+               "enabled_providers": PREFERENCES["enabled_providers"] + [name],
+               "provider_order": PREFERENCES["provider_order"] + [name],
+               name + "_api_key": "private-test-key", name + "_region": "china"}
+    response = client.put('/api/settings', json=payload, headers=headers)
+    assert response.status_code == 200
+    assert response.json()[name + '_api_key_configured'] is True
+    assert response.json()[name + '_region'] == 'china'
+    assert changed == [True]
+    assert 'private-test-key' not in response.text + client.get('/').text
+    reloaded = load_config(path)
+    assert reloaded.providers[name].api_key == 'private-test-key'
+    assert reloaded.providers[name].region == 'china'
+    assert reloaded.providers[name].enabled
+    assert path.stat().st_mode & 0o777 == 0o600
+    del payload[name + '_api_key']
+    del payload[name + '_region']
+    assert client.put('/api/settings', json=payload, headers=headers).status_code == 200
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert load_config(path).providers[name].api_key == 'private-test-key'
+    assert changed == [True]
+
+
+@pytest.mark.parametrize('name', ['glm'])
+@pytest.mark.parametrize('field,value', [('api_key', ''), ('api_key', None), ('api_key', 'bad\nkey'),
+    ('api_key', 'a' * 513), ('region', 'https://evil.test'), ('region', {}), ('region', None)])
+def test_regional_provider_settings_validation(tmp_path, name, field, value):
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    original = path.read_text()
+    response = client.put('/api/settings', json={**PREFERENCES, name + '_' + field: value}, headers=headers)
+    assert response.status_code == 400
+    assert path.read_text() == original

@@ -19,7 +19,7 @@ from starlette.routing import Route
 from starlette.types import Lifespan
 
 from . import __version__
-from .config import Config, ConfigError, PROVIDER_NAMES, WebLayout, layout_cells, save_web_settings
+from .config import Config, ConfigError, PROVIDER_NAMES, API_KEY_PROVIDERS, REGIONAL_PROVIDERS, provider_api_key, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
 from .reset_timer import format_reset_note
 from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data, remaining_pct, format_remaining_value
@@ -124,7 +124,8 @@ class SnapshotStore:
                     self._snapshots[name] = snap
                     self._stale[name] = None
             else:
-                if name in self._snapshots:
+                previous = self._snapshots.get(name)
+                if previous is not None and previous.ok and has_data(previous):
                     self._stale[name] = snap.error
                 else:
                     self._snapshots[name] = snap
@@ -156,11 +157,12 @@ def build_app(
         return preferred + [name for name in names if name not in preferred]
 
     def settings_data() -> dict:
-        deepseek = config.providers.get("deepseek")
         return {"layout": asdict(config.web.layout), "show_claude_gpt": config.web.show_claude_gpt,
                 "provider_order": ordered_names(),
                 "enabled_providers": [name for name in PROVIDER_NAMES if name in ordered_names()],
-                "deepseek_api_key_configured": bool((deepseek and deepseek.api_key) or os.environ.get("DEEPSEEK_API_KEY"))}
+                **{name + "_api_key_configured": bool(provider_api_key(name, config.providers.get(name)))
+                   for name in API_KEY_PROVIDERS},
+                **{name + "_region": config.providers[name].region if name in config.providers else "global" for name in REGIONAL_PROVIDERS}}
 
     page_config = {
         "adaptive": config.layout.adaptive,
@@ -203,15 +205,24 @@ def build_app(
         except (ValueError, UnicodeDecodeError):
             return JSONResponse({"error": "Invalid settings JSON."}, status_code=400)
         if (not isinstance(data, dict) or not {"layout", "show_claude_gpt"} <= set(data)
-                or set(data) - {"layout", "show_claude_gpt", "provider_order", "enabled_providers", "deepseek_api_key"}):
+                or set(data) - {"layout", "show_claude_gpt", "provider_order", "enabled_providers", "deepseek_api_key", "glm_api_key", "glm_region"}):
             return JSONResponse({"error": "Provide layout and show_claude_gpt settings."}, status_code=400)
         layout = data["layout"]
-        api_key = data.get("deepseek_api_key")
-        if "deepseek_api_key" in data:
-            if (not isinstance(api_key, str) or not 1 <= len(api_key.strip()) <= 512
-                    or any(not 33 <= ord(c) <= 126 for c in api_key.strip())):
-                return JSONResponse({"error": "Enter a valid DeepSeek API key."}, status_code=400)
-            api_key = api_key.strip()
+        api_keys, regions = {}, {}
+        for name in API_KEY_PROVIDERS:
+            field = name + "_api_key"
+            if field in data:
+                key = data[field]
+                if (not isinstance(key, str) or not 1 <= len(key.strip()) <= 512
+                        or any(not 33 <= ord(c) <= 126 for c in key.strip())):
+                    return JSONResponse({"error": f"Enter a valid {DISPLAY_NAME[name]} API key."}, status_code=400)
+                api_keys[name] = key.strip()
+        for name in REGIONAL_PROVIDERS:
+            field = name + "_region"
+            if field in data:
+                if data[field] not in ("global", "china"):
+                    return JSONResponse({"error": "Choose global or china region."}, status_code=400)
+                regions[name] = data[field]
         enabled = data.get("enabled_providers")
         if "enabled_providers" in data and (
             not isinstance(enabled, list)
@@ -240,8 +251,10 @@ def build_app(
         def persist() -> tuple[dict, bool]:
             with settings_lock:
                 previous = set(ordered_names())
-                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_key)
-                return settings_data(), previous != set(ordered_names()) or api_key is not None
+                region_changed = any(region != getattr(config.providers.get(name), "region", "global")
+                                     for name, region in regions.items())
+                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_keys=api_keys, regions=regions)
+                return settings_data(), previous != set(ordered_names()) or bool(api_keys) or region_changed
 
         try:
             saved, providers_changed = await run_in_threadpool(persist)
@@ -358,7 +371,7 @@ INDEX_HTML = """<!doctype html>
   .drag-handle:active { cursor: grabbing; }
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
-  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot { filter: invert(1); } }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -424,7 +437,8 @@ INDEX_HTML = """<!doctype html>
   .settings .provider-options:has(:disabled) { opacity: .55; }
   .api-key-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
   .settings .api-key-row label { margin: 0; font-size: 12px; font-weight: 500; }
-  .settings .api-key-row input { padding: 7px 9px; font-size: 12px; }
+  .settings .api-key-row + .api-key-row { margin-top: 6px; }
+  .settings .api-key-row input, .settings .api-key-row select { padding: 7px 9px; font-size: 12px; }
   .settings .provider-options p { margin: 5px 0 0; font-size: 11px; }
   .provider-order { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
   .provider-order li { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
@@ -522,6 +536,21 @@ INDEX_HTML = """<!doctype html>
             </div>
           </div>
           <div class="provider-setting">
+            <div id="provider-toggle-glm"></div>
+            <div class="provider-options">
+              <div class="api-key-row">
+                <label for="glm-region">Region</label>
+                <select id="glm-region"><option value="global">Z.ai</option><option value="china">BigModel</option></select>
+              </div>
+              <div class="api-key-row">
+                <label for="glm-api-key">API key</label>
+                <input id="glm-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set or replace key" aria-describedby="glm-key-hint">
+              </div>
+              <p class="muted" id="glm-key-hint"><span id="glm-key-status"></span> Leave blank to keep.</p>
+            </div>
+          </div>
+          <div class="provider-setting">
             <div id="provider-toggle-deepseek"></div>
             <div class="provider-options">
               <div class="api-key-row">
@@ -584,7 +613,19 @@ INDEX_HTML = """<!doctype html>
     const saveStatus = document.getElementById("settings-save-status");
     const retrySettings = document.getElementById("retry-settings");
     const apiKeyInput = document.getElementById("deepseek-api-key");
-    let savedKeyConfigured = CONFIG.settings.deepseek_api_key_configured;
+    const keyedProviders = ['deepseek', 'glm'];
+    const regionalProviders = ['glm'];
+    let savedAccountSettings = CONFIG.settings;
+    function keyStatus() {
+      keyedProviders.forEach(name => {
+        document.getElementById(name + '-key-status').textContent = savedAccountSettings[name + '_api_key_configured'] ? 'Key configured.' : 'No key set.';
+      });
+    }
+    function restoreAccountSettings() {
+      keyedProviders.forEach(name => { document.getElementById(name + '-api-key').value = ''; });
+      regionalProviders.forEach(name => { document.getElementById(name + '-region').value = savedAccountSettings[name + '_region'] || 'global'; });
+      keyStatus();
+    }
     const providerSwitches = document.getElementById("provider-switches");
     let savedEnabled = CONFIG.settings.enabled_providers;
     let providerNames = [...savedEnabled];
@@ -671,8 +712,7 @@ INDEX_HTML = """<!doctype html>
     function openSettings() {
       if (saving || dragState) return;
       selectMenuTab('providers');
-      apiKeyInput.value = "";
-      document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "Key configured." : "No key set.";
+      restoreAccountSettings();
       providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
       renderProviderSwitches();
@@ -688,7 +728,7 @@ INDEX_HTML = """<!doctype html>
       settings.showModal();
     }
     function restoreSettings() {
-      apiKeyInput.value = "";
+      restoreAccountSettings();
       showClaudeGpt = savedShowClaudeGpt;
       providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
@@ -698,8 +738,15 @@ INDEX_HTML = """<!doctype html>
     }
     function menuPreferences(layout) {
       const preferences = {layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder, enabled_providers: providerNames};
-      const key = apiKeyInput.value.trim();
-      if (key && !apiKeyInput.disabled) preferences.deepseek_api_key = key;
+      keyedProviders.forEach(name => {
+        const input = document.getElementById(name + '-api-key');
+        const key = input.value.trim();
+        if (key && !input.disabled) preferences[name + '_api_key'] = key;
+      });
+      regionalProviders.forEach(name => {
+        const input = document.getElementById(name + '-region');
+        if (!input.disabled) preferences[name + '_region'] = input.value;
+      });
       return preferences;
     }
     function scheduleMenuSave(delay = 400) {
@@ -753,13 +800,15 @@ INDEX_HTML = """<!doctype html>
         savedShowClaudeGpt = data.show_claude_gpt;
         savedOrder = data.provider_order;
         savedEnabled = data.enabled_providers;
-        savedKeyConfigured = data.deepseek_api_key_configured;
+        savedAccountSettings = data;
         if (fromMenu) {
-          document.getElementById("deepseek-key-status").textContent = savedKeyConfigured ? "Key configured." : "No key set.";
+          keyStatus();
           if (revision === menuRevision) {
             menuDirty = false;
             saveStatus.textContent = "Saved";
-            if (preferences.deepseek_api_key) apiKeyInput.value = "";
+            keyedProviders.forEach(name => {
+              if (preferences[name + '_api_key']) document.getElementById(name + '-api-key').value = '';
+            });
           }
         } else restoreSettings();
         layoutStatus.textContent = fromMenu ? "Settings saved to config." : "Card order saved to config.";
@@ -798,7 +847,12 @@ INDEX_HTML = """<!doctype html>
     }
     function updateProviderOptions() {
       groupInput.disabled = !providerNames.includes('gemini');
-      apiKeyInput.disabled = !providerNames.includes('deepseek');
+      keyedProviders.forEach(name => {
+        document.getElementById(name + '-api-key').disabled = !providerNames.includes(name);
+      });
+      regionalProviders.forEach(name => {
+        document.getElementById(name + '-region').disabled = !providerNames.includes(name);
+      });
     }
     providerSwitches.addEventListener('change', event => {
       const input = event.target;
@@ -942,7 +996,12 @@ INDEX_HTML = """<!doctype html>
     rowsInput.addEventListener("input", () => scheduleMenuSave());
     columnsInput.addEventListener("input", () => scheduleMenuSave());
     groupInput.addEventListener("change", () => scheduleMenuSave(0));
-    apiKeyInput.addEventListener("input", () => scheduleMenuSave(600));
+    keyedProviders.forEach(name => {
+      document.getElementById(name + '-api-key').addEventListener('input', () => scheduleMenuSave(600));
+    });
+    regionalProviders.forEach(name => {
+      document.getElementById(name + '-region').addEventListener('change', () => scheduleMenuSave(0));
+    });
     retrySettings.addEventListener("click", () => scheduleMenuSave(0));
     document.getElementById("preset-stack").addEventListener("click", () => preset(1));
     document.getElementById("preset-two").addEventListener("click", () => preset(2));
@@ -1057,7 +1116,7 @@ INDEX_HTML = """<!doctype html>
           savedShowClaudeGpt = preferences.show_claude_gpt;
           savedOrder = preferences.provider_order;
           savedEnabled = preferences.enabled_providers;
-          savedKeyConfigured = preferences.deepseek_api_key_configured;
+          savedAccountSettings = preferences;
           if (!settings.open) restoreSettings();
         }
         renderCards(data);

@@ -1,6 +1,6 @@
 # aitop
 
-Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), and DeepSeek** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
+Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, and GLM** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
 See the [v1.0.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
@@ -47,7 +47,7 @@ Open **http://localhost:8787**. The web server is off by default.
 
 *Web dashboard with demo data.*
 
-- **Menu:** turn providers on/off, set a DeepSeek API key, choose a grid, and reorder cards. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
+- **Menu:** turn providers on/off, set provider API keys and regions, choose a grid, and reorder cards. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
 - **Drag cards** to reorder and save immediately. Grips support touch and arrow keys.
 - **Automatic saving** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Changes save as you make them; closing the Menu finishes pending saves. If saving fails, the Menu shows an error and a Retry button.
 
@@ -65,11 +65,16 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | Codex | `codex` on `PATH`, already logged in | CLI `/status` |
 | Antigravity | `agy` CLI on `PATH`, already logged in | CLI `/usage`, including both quota groups |
 | DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
+| GLM | API key in **Menu**, or `GLM_API_KEY`; choose Z.ai or BigModel | HTTPS Coding Plan quota API |
 | GitHub Copilot | `gh auth login`, or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | HTTPS account quotas |
 
 Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek shows an account balance rather than a quota bar.
 
 Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
+
+Enable **GLM** under **Menu → Providers**, select your account's region, and enter its API key. Changes save automatically. GLM is off by default. GLM uses the [official usage plugin's quota endpoint](https://github.com/zai-org/zai-coding-plugins/blob/main/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs) to show Coding Plan session, weekly, and MCP tool quotas when returned. The official usage plugin supports personal Coding Plans. A pay-as-you-go key alone does not provide these plan quotas. This integration only reads usage; it does not make model requests.
+
+GLM also accepts `ZAI_API_KEY` for the Global region or `ZHIPU_API_KEY` for China, after `GLM_API_KEY`. Saved keys take precedence. When running aitop as a service, set environment keys in that service's environment, or use the Menu. API key fields stay blank after saving and are disabled when their provider is off.
 
 CLI data is parsed from terminal output. Expired logins or changes to vendor screens may produce **no data**. Reopen the relevant CLI and check its login and usage screen; aitop does not log in or refresh credentials for you.
 
@@ -92,7 +97,7 @@ port = 8787
 
 Set `show_remaining = false` for usage bars, or `reset_countdown = false` for native reset notes. Web-specific overrides, provider positions, timeouts, and grid settings are covered in the [configuration reference](docs/configuration.md).
 
-Provider switches control both display and polling. Saved DeepSeek keys stay in the local config with owner-only permissions and are never returned to the browser.
+Provider switches control both display and polling. Saved provider keys stay in the local config with owner-only permissions and are never returned to the browser.
 
 Restart aitop after editing the file. Changes saved through the Web Menu apply immediately.
 

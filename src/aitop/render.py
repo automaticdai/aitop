@@ -40,6 +40,7 @@ DISPLAY_NAME = {
     "gemini": "Antigravity (agy)",
     "deepseek": "DeepSeek",
     "copilot": "GitHub Copilot",
+    "glm": "GLM",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -52,6 +53,7 @@ _FONT: dict[str, tuple[str, str, str, str, str]] = {
     "C": (" ###", "#   ", "#   ", "#   ", " ###"),
     "D": ("### ", "#  #", "#  #", "#  #", "### "),
     "E": ("####", "#   ", "### ", "#   ", "####"),
+    "M": ("#  #", "####", "#  #", "#  #", "#  #"),
     "G": (" ###", "#   ", "# ##", "#  #", " ###"),
     "H": ("#  #", "#  #", "####", "#  #", "#  #"),
     "I": (" ## ", "  # ", "  # ", "  # ", " ## "),
@@ -92,6 +94,7 @@ LOGOS = {
         "GOOGLE", colors=["#4285F4", "#EA4335", "#FBBC05", "#4285F4", "#34A853", "#EA4335"]
     ),
     "deepseek": f"[#4D6BFE]{_text_art('DEEPSEEK')}[/]",  # DeepSeek blue
+    "glm": f"[#4D6BFE]{_text_art('GLM')}[/]",
     "copilot": f"[#A78BFA]{_text_art('COPILOT')}[/]",
 }
 
@@ -105,6 +108,7 @@ LOGO_WIDTH = {
     "codex": 5 * len("OPENAI") - 1,
     "gemini": 5 * len("GOOGLE") - 1,
     "deepseek": 5 * len("DEEPSEEK") - 1,
+    "glm": 5 * len("GLM") - 1,
     "copilot": 5 * len("COPILOT") - 1,
 }
 
@@ -242,9 +246,10 @@ def daily_label(provider: str) -> str:
     "session" there. Codex's is its own CLI's "5h limit:" row (see
     providers/codex.py's _DAILY_RE) -- also a rolling window rather than a
     calendar day, and its length isn't always 5 hours across plans -- so it
-    reads "session" too. Every other provider keeps the plain "daily".
+    reads "session" too. GLM uses a rolling Coding Plan session window.
+    Other providers keep the plain "daily".
     """
-    if provider in ("claude", "codex"):
+    if provider in ("claude", "codex", "glm"):
         return "session"
     return "daily"
 

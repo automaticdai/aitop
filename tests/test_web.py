@@ -291,7 +291,7 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
         "layout": {"mode": "custom", "rows": 2, "columns": 3}, "show_claude_gpt": True,
         "provider_order": ["codex", "claude"],
         "enabled_providers": ["claude", "codex"],
-        "deepseek_api_key_configured": bool(web_module.os.environ.get("DEEPSEEK_API_KEY")),
+        "glm_api_key_configured": bool(web_module.os.environ.get("GLM_API_KEY") or web_module.os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(web_module.os.environ.get("DEEPSEEK_API_KEY")),
     }
     assert page_config == {
         "adaptive": False,
@@ -613,7 +613,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
     assert json.loads(cancelled["writes"][0]["body"])["show_claude_gpt"] is True
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm"])
 def test_provider_logos_are_served_locally_and_in_loading_cards(provider):
     client = TestClient(build_app(SnapshotStore()))
     response = client.get(f"/logos/{provider}.svg")
@@ -703,3 +703,38 @@ def test_snapshot_to_dict_claude_daily_label():
     assert snapshot_to_dict(UsageSnapshot("claude"))["daily_label"] == "session"
     assert snapshot_to_dict(UsageSnapshot("codex"))["daily_label"] == "session"
     assert snapshot_to_dict(UsageSnapshot("gemini"))["daily_label"] == "daily"
+
+
+@pytest.mark.parametrize('name', ['glm'])
+def test_region_change_back_is_queued_during_save(name):
+    cfg = Config.defaults()
+    cfg.layout.adaptive = True
+    cfg.providers[name].enabled = True
+    rendered = _render_in_js(cfg, [], """
+      openSettings();
+      const input = document.getElementById('""" + name + """-region');
+      const originalFetch = fetch;
+      let release, requests = 0;
+      fetch = (...args) => requests++ === 0
+        ? new Promise(resolve => { release = () => resolve(originalFetch(...args)); })
+        : originalFetch(...args);
+      input.value = 'china'; input.listeners.change();
+      const firstSave = flushMenuSave();
+      input.value = 'global'; input.listeners.change();
+      release();
+      await firstSave;
+      await closeSettings();
+    """)
+    writes = [json.loads(write['body']) for write in rendered['writes']]
+    assert [write[name + '_region'] for write in writes] == ['china', 'global']
+    assert rendered['open'] is False
+
+
+@pytest.mark.parametrize("previous", [UsageSnapshot("glm", ok=False, error="Missing key"), UsageSnapshot("glm")])
+def test_store_replaces_old_error_or_empty_snapshot_with_current_error(previous):
+    store = SnapshotStore()
+    store.update(previous)
+    store.update(UsageSnapshot("glm", ok=False, error="No Coding Plan"))
+    entry = store.entries()[0]
+    assert entry["error"] == "No Coding Plan"
+    assert entry["stale"] is None

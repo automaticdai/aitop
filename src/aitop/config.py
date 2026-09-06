@@ -15,7 +15,19 @@ import tomlkit
 # (where "current working directory" no longer means "the project folder").
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
-PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot")
+PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm")
+
+API_KEY_PROVIDERS = ("deepseek", "glm")
+REGIONAL_PROVIDERS = ("glm",)
+
+
+def provider_api_key(name: str, pc: "ProviderConfig | None") -> str | None:
+    if pc and pc.api_key:
+        return pc.api_key
+    names = [name.upper() + "_API_KEY"]
+    if name == "glm":
+        names.append("ZHIPU_API_KEY" if pc and pc.region == "china" else "ZAI_API_KEY")
+    return next((os.environ[n] for n in names if os.environ.get(n)), None)
 
 
 class ConfigError(ValueError):
@@ -78,6 +90,7 @@ class ProviderConfig:
     timeout_s: float = 15.0
     enabled: bool = True
     api_key: str | None = field(default=None, repr=False)
+    region: str = "global"
 
 
 @dataclass
@@ -114,7 +127,7 @@ class Config:
 
     @classmethod
     def defaults(cls) -> "Config":
-        return cls(providers={name: ProviderConfig(enabled=name != "copilot") for name in PROVIDER_NAMES})
+        return cls(providers={name: ProviderConfig(enabled=name not in ("copilot", "glm")) for name in PROVIDER_NAMES})
 
 
 def place_providers(
@@ -249,8 +262,10 @@ def default_config_toml() -> str:
     for name in PROVIDER_NAMES:
         lines.append(f"[providers.{name}]")
         lines.append(f"enabled = {str(cfg.providers[name].enabled).lower()}")
-        if name == "deepseek":
-            lines.append("# Set api_key through the web Menu, or use DEEPSEEK_API_KEY.")
+        if name in API_KEY_PROVIDERS:
+            lines.append(f"# Set api_key through the web Menu, or use {name.upper()}_API_KEY.")
+        if name in REGIONAL_PROVIDERS:
+            lines.append('region = "global" # "global" or "china"')
         if name == "copilot":
             lines.append("# Enable after gh auth login, or set COPILOT_GITHUB_TOKEN.")
         if name in placement:
@@ -341,10 +356,14 @@ def _parse_config(path: Path) -> Config:
             pc = cfg.providers.setdefault(name, ProviderConfig())
             if isinstance(pdata, dict):
                 pc.enabled = _as_bool(pdata, "enabled", True, path)
-                if name == "deepseek" and "api_key" in pdata:
+                if name in API_KEY_PROVIDERS and "api_key" in pdata:
                     if not isinstance(pdata["api_key"], str):
-                        raise ConfigError(f"{path}: `providers.deepseek.api_key` must be a string")
+                        raise ConfigError(f"{path}: `providers.{name}.api_key` must be a string")
                     pc.api_key = pdata["api_key"].strip() or None
+                if name in REGIONAL_PROVIDERS:
+                    if pdata.get("region", "global") not in ("global", "china"):
+                        raise ConfigError(f"{path}: `providers.{name}.region` must be global or china")
+                    pc.region = pdata.get("region", "global")
                 if "position" in pdata:
                     pos = pdata["position"]
                     if isinstance(pos, (list, tuple)) and len(pos) == 2:
@@ -404,6 +423,7 @@ def save_web_settings(
     provider_order: list[str] | None = None,
     enabled_providers: list[str] | None = None,
     deepseek_api_key: str | None = None,
+    *, api_keys: dict[str, str] | None = None, regions: dict[str, str] | None = None,
 ) -> None:
     """Persist only web preferences; publish in memory only after a successful save.
 
@@ -414,6 +434,14 @@ def save_web_settings(
     path = config.source_path
     if path is None:
         raise ConfigError("No config file is associated with this server")
+    api_keys = dict(api_keys or {})
+    regions = dict(regions or {})
+    if deepseek_api_key is not None:
+        api_keys["deepseek"] = deepseek_api_key
+    if set(api_keys) - set(API_KEY_PROVIDERS) or set(regions) - set(REGIONAL_PROVIDERS):
+        raise ConfigError("Unknown provider settings")
+    if any(region not in ("global", "china") for region in regions.values()):
+        raise ConfigError("Provider region must be global or china")
     temporary: str | None = None
     updated = with_enabled_providers(config, enabled_providers) if enabled_providers is not None else None
     try:
@@ -439,10 +467,11 @@ def save_web_settings(
                     entry["position"] = list(pc.position)
             base = document.setdefault("layout", tomlkit.table())
             base["rows"], base["columns"] = updated.layout.rows, updated.layout.columns
-        if deepseek_api_key is not None:
-            providers = document.setdefault("providers", tomlkit.table())
-            providers.setdefault("deepseek", tomlkit.table())["api_key"] = deepseek_api_key
-        has_secret = bool(document.get("providers", {}).get("deepseek", {}).get("api_key"))
+        for field_name, values in (("api_key", api_keys), ("region", regions)):
+            for name, value in values.items():
+                providers = document.setdefault("providers", tomlkit.table())
+                providers.setdefault(name, tomlkit.table())[field_name] = value
+        has_secret = any(document.get("providers", {}).get(name, {}).get("api_key") for name in API_KEY_PROVIDERS)
         with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".aitop-", delete=False) as stream:
             temporary = stream.name
             os.chmod(temporary, 0o600 if has_secret else path.stat().st_mode & 0o777)
@@ -465,5 +494,7 @@ def save_web_settings(
     if updated is not None:
         config.providers = updated.providers
         config.layout = updated.layout
-    if deepseek_api_key is not None:
-        config.providers.setdefault("deepseek", ProviderConfig()).api_key = deepseek_api_key
+    for name, key in api_keys.items():
+        config.providers.setdefault(name, ProviderConfig()).api_key = key
+    for name, region in regions.items():
+        config.providers.setdefault(name, ProviderConfig()).region = region
