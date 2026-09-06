@@ -1,8 +1,8 @@
 # aitop
 
-Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, and OpenRouter** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
+Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, and MiniMax** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
-See the [v1.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
+See the [v1.2 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
 ## Install
 
@@ -68,8 +68,10 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | GLM | API key in **Menu**, or `GLM_API_KEY`; choose Z.ai or BigModel | HTTPS Coding Plan quota API |
 | GitHub Copilot | `gh auth login`, or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | HTTPS account quotas |
 | OpenRouter | API key in **Menu**, or `OPENROUTER_API_KEY` | HTTPS key and credits API |
+| Kimi | API key in **Menu**, or `KIMI_API_KEY` / `MOONSHOT_API_KEY`; choose a region | HTTPS balance API |
+| MiniMax | API key in **Menu**, or `MINIMAX_API_KEY`; choose a region | HTTPS Token Plan quota API |
 
-Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek and OpenRouter show an account balance rather than a quota bar.
+Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek, OpenRouter, and Kimi show an account balance rather than a quota bar.
 
 Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
 
@@ -78,6 +80,10 @@ Enable **GLM** under **Menu → Providers**, select your account's region, and e
 Enable **OpenRouter** under **Menu → Providers** and enter an API key; it is off by default. The card shows credits left plus spend for today, this week, and this month. Spend windows have no vendor-set cap, so they appear as plain amounts rather than bars, and a free-tier key is labelled as such under the logo.
 
 Where the balance comes from depends on the key. A key with a spending limit reports what is left on that limit, which is what decides whether its next call succeeds. A key with no limit falls back to the account's own credits (purchased credits less lifetime usage). OpenRouter documents that second endpoint as needing a [provisioning key](https://openrouter.ai/docs/features/provisioning-api-keys), but an ordinary inference key reads it in practice; if an account does refuse it, the card drops the balance and shows spend alone rather than failing. A new account with no purchased credits correctly reads `0.00 USD` — free models still work at that balance. This integration only reads usage; it does not make model requests.
+
+Enable **Kimi** under **Menu → Providers**, select the region matching your account, and enter its API key. Kimi is off by default. The card shows the pay-as-you-go balance from Moonshot's [balance endpoint](https://platform.kimi.ai/docs/api/balance). At or below zero the vendor rejects every call, so the card marks the balance as insufficient. Keys are issued per platform and are not interchangeable: a global key sent to the China host returns 401, which is why a failure names the region as well as the key. A **Kimi Code** subscription is a different product with its own request quotas and no published API; this adapter does not read it.
+
+Enable **MiniMax** under **Menu → Providers**, select the region, and enter a Token Plan key. MiniMax is off by default. The card shows the Token Plan's rolling 5-hour session window and its weekly window as request quotas. MiniMax does not publish a quota endpoint, so this adapter reads the same `token_plan/remains` route the community tooling uses; it is **not vendor-documented and may change or be withdrawn**. A pay-as-you-go key with no Token Plan reports that no plan was found rather than an error. This integration only reads usage; it does not make model requests.
 
 GLM also accepts `ZAI_API_KEY` for the Global region or `ZHIPU_API_KEY` for China, after `GLM_API_KEY`. Saved keys take precedence. When running aitop as a service, set environment keys in that service's environment, or use the Menu. API key fields stay blank after saving and are disabled when their provider is off.
 

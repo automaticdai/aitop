@@ -32,8 +32,41 @@ systemctl --user enable --now aitop.service
 
 [Lingering](https://www.freedesktop.org/software/systemd/man/252/loginctl.html)
 starts the user service manager at boot and keeps it running after logout.
-aitop will start when this WSL distribution starts; this does not launch WSL
-at Windows sign-in. Open `http://localhost:8787` with the default web port.
+aitop will start when this WSL distribution starts. Launching the distribution
+itself at Windows sign-in takes one more step, below. Open
+`http://localhost:8787` with the default web port.
+
+## Start WSL at Windows sign-in
+
+Lingering starts aitop when the distribution starts, but nothing starts the
+distribution itself until you open a WSL terminal. To close that gap, have
+Windows launch the distribution at sign-in. Save this as
+`%LOCALAPPDATA%\aitop\start-wsl.vbs`, substituting your distribution name
+(`wsl.exe -l -q` lists them). The wrapper exists only to keep the console
+window hidden; window style `0` runs it invisibly.
+
+```vbscript
+CreateObject("WScript.Shell").Run "wsl.exe -d Ubuntu-24.04 --exec /bin/true", 0, False
+```
+
+Register it as a logon task in PowerShell (no administrator rights needed):
+
+```powershell
+$vbs = "$env:LOCALAPPDATA\aitop\start-wsl.vbs"
+Register-ScheduledTask -TaskName 'Start WSL for aitop' `
+  -Action (New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbs`"") `
+  -Trigger (New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME) `
+  -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries -StartWhenAvailable `
+      -ExecutionTimeLimit ([TimeSpan]::Zero))
+```
+
+`/bin/true` exits immediately; the distribution keeps running because systemd
+is PID 1 and the lingering user manager holds aitop open. The dashboard is
+then reachable at `http://localhost:8787` after sign-in without opening a
+terminal. This triggers at sign-in, not at boot: Windows must reach your
+desktop first. Remove it with
+`Unregister-ScheduledTask -TaskName 'Start WSL for aitop'`.
 
 ```bash
 systemctl --user status aitop.service           # status

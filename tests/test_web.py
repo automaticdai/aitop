@@ -11,7 +11,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from aitop import web as web_module
-from aitop.config import Config, ProviderConfig, WebLayout, load_config
+from aitop.config import (API_KEY_PROVIDERS, REGIONAL_PROVIDERS, Config, ProviderConfig,
+                          WebLayout, load_config, provider_api_key)
 from aitop.models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 from aitop.web import (
     INDEX_HTML,
@@ -286,6 +287,11 @@ def test_favicon_is_served_and_linked_from_dashboard():
     assert '<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=usage-bars">' in client.get("/").text
 
 
+def _account_settings():
+    return {**{name + "_api_key_configured": bool(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
+            **{name + "_region": "global" for name in REGIONAL_PROVIDERS}}
+
+
 def _page_config(client):
     html = client.get("/").text
     return json.loads(re.search(r"const CONFIG = (.*);", html).group(1))
@@ -317,8 +323,11 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
         "layout": {"mode": "custom", "rows": 2, "columns": 3}, "show_claude_gpt": True,
         "provider_order": ["codex", "claude"],
         "enabled_providers": ["claude", "codex"],
-        "glm_api_key_configured": bool(web_module.os.environ.get("GLM_API_KEY") or web_module.os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(web_module.os.environ.get("DEEPSEEK_API_KEY")),
-        "openrouter_api_key_configured": bool(web_module.os.environ.get("OPENROUTER_API_KEY")),
+        # Derived from the provider tables rather than spelled out: the claim
+        # is that the page ships exactly one key flag per keyed provider and
+        # one region per regional one, which shouldn't need rewriting here
+        # every time a provider is added.
+        **_account_settings(),
     }
     assert page_config == {
         "adaptive": False,
@@ -640,7 +649,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
     assert json.loads(cancelled["writes"][0]["body"])["show_claude_gpt"] is True
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax"])
 def test_provider_logos_are_served_locally_and_in_loading_cards(provider):
     client = TestClient(build_app(SnapshotStore()))
     response = client.get(f"/logos/{provider}.svg")

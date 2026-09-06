@@ -384,7 +384,7 @@ INDEX_HTML = """<!doctype html>
   .drag-handle:active { cursor: grabbing; }
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
-  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter { filter: invert(1); } }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter, .provider-logo.kimi { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -572,6 +572,36 @@ INDEX_HTML = """<!doctype html>
             </div>
           </div>
           <div class="provider-setting">
+            <div id="provider-toggle-kimi"></div>
+            <div class="provider-options">
+              <div class="api-key-row">
+                <label for="kimi-region">Region</label>
+                <select id="kimi-region"><option value="global">Moonshot Global</option><option value="china">Moonshot China</option></select>
+              </div>
+              <div class="api-key-row">
+                <label for="kimi-api-key">API key</label>
+                <input id="kimi-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set or replace key" aria-describedby="kimi-key-hint">
+              </div>
+              <p class="muted" id="kimi-key-hint"><span id="kimi-key-status"></span> Leave blank to keep.</p>
+            </div>
+          </div>
+          <div class="provider-setting">
+            <div id="provider-toggle-minimax"></div>
+            <div class="provider-options">
+              <div class="api-key-row">
+                <label for="minimax-region">Region</label>
+                <select id="minimax-region"><option value="global">MiniMax Global</option><option value="china">MiniMax China</option></select>
+              </div>
+              <div class="api-key-row">
+                <label for="minimax-api-key">API key</label>
+                <input id="minimax-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set or replace key" aria-describedby="minimax-key-hint">
+              </div>
+              <p class="muted" id="minimax-key-hint"><span id="minimax-key-status"></span> Leave blank to keep.</p>
+            </div>
+          </div>
+          <div class="provider-setting">
             <div id="provider-toggle-openrouter"></div>
             <div class="provider-options">
               <div class="api-key-row">
@@ -645,8 +675,8 @@ INDEX_HTML = """<!doctype html>
     const saveStatus = document.getElementById("settings-save-status");
     const apiKeyInput = document.getElementById("deepseek-api-key");
     const retrySettings = document.getElementById("retry-settings");
-    const keyedProviders = ['deepseek', 'glm', 'openrouter'];
-    const regionalProviders = ['glm'];
+    const keyedProviders = ['deepseek', 'glm', 'openrouter', 'kimi', 'minimax'];
+    const regionalProviders = ['glm', 'kimi', 'minimax'];
     let savedAccountSettings = CONFIG.settings;
     function keyStatus() {
       keyedProviders.forEach(name => {

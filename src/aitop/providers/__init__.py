@@ -6,6 +6,8 @@ from .codex import CodexProvider
 from .copilot import CopilotProvider
 from .deepseek import DeepSeekProvider
 from .gemini import GeminiProvider
+from .kimi import KimiProvider
+from .minimax import MiniMaxProvider
 from .mock import MockProvider
 from .openrouter import OpenRouterProvider
 from .glm import GLMProvider
@@ -24,8 +26,9 @@ def build_providers(config: Config, mock: bool = False) -> list:
             provider = DeepSeekProvider(api_key=config.providers[name].api_key)
         elif name == "openrouter":
             provider = OpenRouterProvider(api_key=config.providers[name].api_key)
-        elif name == "glm":
-            provider = GLMProvider(api_key=config.providers[name].api_key, region=config.providers[name].region)
+        elif name in ("glm", "kimi", "minimax"):
+            adapter = {"glm": GLMProvider, "kimi": KimiProvider, "minimax": MiniMaxProvider}[name]
+            provider = adapter(api_key=config.providers[name].api_key, region=config.providers[name].region)
         elif name == "codex":
             provider = CodexProvider()
         elif name == "copilot":

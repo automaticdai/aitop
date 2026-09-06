@@ -46,6 +46,16 @@ region = "global"    # "global" = Z.ai, "china" = BigModel
 enabled = false
 # api_key can be set in Menu; OPENROUTER_API_KEY is the fallback.
 
+[providers.kimi]
+enabled = false
+region = "global"    # "global" = api.moonshot.ai, "china" = api.moonshot.cn
+# api_key can be set in Menu; KIMI_API_KEY or MOONSHOT_API_KEY is the fallback.
+
+[providers.minimax]
+enabled = false
+region = "global"    # "global" = www.minimax.io, "china" = www.minimaxi.com
+# api_key can be set in Menu; MINIMAX_API_KEY is the fallback.
+
 [web]
 enabled = false
 host = "127.0.0.1"
@@ -68,10 +78,10 @@ columns = 2
   - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every enabled built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
   - `rows` — number of rows. Defaults to `4`.
   - `columns` — number of columns. Defaults to `1`.
-- `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`, `copilot`, `glm`, `openrouter`). Any provider omitted from the file keeps its defaults.
-  - `enabled` — whether to display and poll this provider. Defaults to `true` for the original four providers; Copilot, GLM, and OpenRouter are off when omitted. An explicit provider table without `enabled` enables that provider. `false` takes precedence over adaptive layout and positions. Menu switches apply immediately to the running poller and TUI. Turning a provider on restores a valid position and expands a fixed grid when necessary.
-  - `api_key` — DeepSeek, GLM, and OpenRouter. A key saved through the Menu takes precedence over the corresponding `DEEPSEEK_API_KEY`, `GLM_API_KEY`, or `OPENROUTER_API_KEY`. Saving a key sets config permissions to `600`; API responses expose only whether a key is configured. Leave the Menu field blank to retain it; remove this config key manually to return to the environment variable.
-  - `region` — GLM only: `"global"` (default) or `"china"`. GLM selects `api.z.ai` or `open.bigmodel.cn`. GLM also falls back to `ZAI_API_KEY` for global accounts or `ZHIPU_API_KEY` for China accounts. Region controls save automatically in the Menu and are disabled while the provider is off.
+- `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`, `copilot`, `glm`, `openrouter`, `kimi`, `minimax`). Any provider omitted from the file keeps its defaults.
+  - `enabled` — whether to display and poll this provider. Defaults to `true` for the original four providers; Copilot, GLM, OpenRouter, Kimi, and MiniMax are off when omitted. An explicit provider table without `enabled` enables that provider. `false` takes precedence over adaptive layout and positions. Menu switches apply immediately to the running poller and TUI. Turning a provider on restores a valid position and expands a fixed grid when necessary.
+  - `api_key` — DeepSeek, GLM, OpenRouter, Kimi, and MiniMax. A key saved through the Menu takes precedence over the corresponding `DEEPSEEK_API_KEY`, `GLM_API_KEY`, `OPENROUTER_API_KEY`, `KIMI_API_KEY`, or `MINIMAX_API_KEY`. Saving a key sets config permissions to `600`; API responses expose only whether a key is configured. Leave the Menu field blank to retain it; remove this config key manually to return to the environment variable.
+  - `region` — GLM, Kimi, and MiniMax: `"global"` (default) or `"china"`. GLM selects `api.z.ai` or `open.bigmodel.cn`; Kimi selects `api.moonshot.ai` or `api.moonshot.cn` and its balance currency (USD or CNY); MiniMax selects `www.minimax.io` or `www.minimaxi.com`. Kimi and MiniMax keys are issued per platform and return 401 against the other region. GLM also falls back to `ZAI_API_KEY` for global accounts or `ZHIPU_API_KEY` for China accounts. Region controls save automatically in the Menu and are disabled while the provider is off.
   - Copilot authentication uses `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`, or falls back to `gh auth token --hostname github.com`. For a background service, authenticate `gh` as the service user or put the environment token in the service environment. The Copilot CLI is not required. No GitHub token is exposed through the dashboard or stored in aitop's config.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
   - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. PTY adapters also cap normal captures at about 11 seconds; a lower configured timeout cancels and cleans up the helper and CLI child immediately.

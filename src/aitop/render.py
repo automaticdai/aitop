@@ -42,6 +42,8 @@ DISPLAY_NAME = {
     "copilot": "GitHub Copilot",
     "glm": "GLM",
     "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "minimax": "MiniMax",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -67,6 +69,7 @@ _FONT: dict[str, tuple[str, str, str, str, str]] = {
     "S": (" ###", "#   ", " ## ", "   #", "### "),
     "T": ("####", " #  ", " #  ", " #  ", " #  "),
     "U": ("#  #", "#  #", "#  #", "#  #", " ## "),
+    "X": ("#  #", "#  #", " ## ", "#  #", "#  #"),
 }
 
 
@@ -99,6 +102,8 @@ LOGOS = {
     "glm": f"[#4D6BFE]{_text_art('GLM')}[/]",
     "copilot": f"[#A78BFA]{_text_art('COPILOT')}[/]",
     "openrouter": f"[#6467F2]{_text_art('OPENROUTER')}[/]",  # OpenRouter indigo
+    "kimi": f"[#1783FF]{_text_art('KIMI')}[/]",  # Moonshot blue
+    "minimax": f"[#E2167E]{_text_art('MINIMAX')}[/]",  # MiniMax magenta
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -114,6 +119,8 @@ LOGO_WIDTH = {
     "glm": 5 * len("GLM") - 1,
     "copilot": 5 * len("COPILOT") - 1,
     "openrouter": 5 * len("OPENROUTER") - 1,
+    "kimi": 5 * len("KIMI") - 1,
+    "minimax": 5 * len("MINIMAX") - 1,
 }
 
 
@@ -252,9 +259,11 @@ def daily_label(provider: str) -> str:
     providers/codex.py's _DAILY_RE) -- also a rolling window rather than a
     calendar day, and its length isn't always 5 hours across plans -- so it
     reads "session" too. GLM uses a rolling Coding Plan session window.
-    Other providers keep the plain "daily".
+    MiniMax's Token Plan enforces a rolling 5-hour interval alongside its
+    weekly window, so that one reads "session" too. Other providers keep the
+    plain "daily".
     """
-    if provider in ("claude", "codex", "glm"):
+    if provider in ("claude", "codex", "glm", "minimax"):
         return "session"
     return "daily"
 

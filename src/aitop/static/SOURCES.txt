@@ -10,3 +10,10 @@ Downloaded 2026-09-06 from the same MIT-licensed collection.
 
 openrouter.svg: packages/static-svg/icons/openrouter.svg
 Downloaded 2026-09-06 from the same MIT-licensed collection.
+
+kimi.svg: packages/static-svg/icons/kimi.svg
+minimax.svg: packages/static-svg/icons/minimax-color.svg
+Downloaded 2026-09-06 from the same MIT-licensed collection. Kimi uses the
+monochrome mark because the colored one draws its glyph in white, which
+disappears on the light theme; MiniMax's colored mark is a gradient that
+reads on both.

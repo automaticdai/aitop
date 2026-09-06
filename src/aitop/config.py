@@ -15,10 +15,13 @@ import tomlkit
 # (where "current working directory" no longer means "the project folder").
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
-PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter")
+PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax")
 
-API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter")
-REGIONAL_PROVIDERS = ("glm",)
+API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter", "kimi", "minimax")
+# Providers that need credentials or a paid plan aitop can't assume: off
+# unless the user turns them on, so a fresh install shows no broken cards.
+_OPT_IN = ("copilot", "glm", "openrouter", "kimi", "minimax")
+REGIONAL_PROVIDERS = ("glm", "kimi", "minimax")
 
 
 def provider_api_key(name: str, pc: "ProviderConfig | None") -> str | None:
@@ -27,6 +30,10 @@ def provider_api_key(name: str, pc: "ProviderConfig | None") -> str | None:
     names = [name.upper() + "_API_KEY"]
     if name == "glm":
         names.append("ZHIPU_API_KEY" if pc and pc.region == "china" else "ZAI_API_KEY")
+    if name == "kimi":
+        # The vendor's own docs and SDKs call this MOONSHOT_API_KEY, so accept
+        # it after the aitop-style name rather than making users re-export.
+        names.append("MOONSHOT_API_KEY")
     return next((os.environ[n] for n in names if os.environ.get(n)), None)
 
 
@@ -127,7 +134,7 @@ class Config:
 
     @classmethod
     def defaults(cls) -> "Config":
-        return cls(providers={name: ProviderConfig(enabled=name not in ("copilot", "glm", "openrouter"))
+        return cls(providers={name: ProviderConfig(enabled=name not in _OPT_IN)
                              for name in PROVIDER_NAMES})
 
 

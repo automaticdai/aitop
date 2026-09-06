@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2 — 2026-09-06
+
+- Add Kimi pay-as-you-go balance monitoring for Moonshot Global and China accounts, marking a balance at or below zero as insufficient because the vendor then rejects every call.
+- Add MiniMax Token Plan monitoring with rolling 5-hour session and weekly request quotas. The endpoint is not vendor-documented; a key without a Token Plan reports that rather than failing.
+- Add region selectors for Kimi and MiniMax alongside GLM's, and accept `MOONSHOT_API_KEY` for Kimi. Both providers are opt-in.
+- Document starting WSL at Windows sign-in, so the service runs without opening a terminal.
+
+Upgrade the package, restart aitop, and reload the browser. Enable Kimi or MiniMax under **Menu → Providers**, pick the region matching the account, and enter its API key.
+
 ## v1.1 — 2026-09-06
 
 - Add GLM Coding Plan quota monitoring for Z.ai and BigModel accounts.

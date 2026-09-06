@@ -7,7 +7,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from aitop import config as config_module
-from aitop.config import ConfigError, WebLayout, load_config, save_web_settings
+from aitop.config import (API_KEY_PROVIDERS, REGIONAL_PROVIDERS, ConfigError, WebLayout,
+                          load_config, provider_api_key, save_web_settings)
 from aitop.web import SnapshotStore, build_app
 
 
@@ -18,7 +19,14 @@ PREFERENCES = {
 }
 
 
-EXPECTED_PREFS = {**PREFERENCES, "glm_api_key_configured": bool(os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY")), "openrouter_api_key_configured": bool(os.environ.get("OPENROUTER_API_KEY"))}
+# Derived from the provider tables so adding a keyed or regional provider
+# doesn't mean rewriting this literal: the settings endpoint must report one
+# key flag per keyed provider and one region per regional one.
+EXPECTED_PREFS = {
+    **PREFERENCES,
+    **{name + "_api_key_configured": bool(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
+    **{name + "_region": "global" for name in REGIONAL_PROVIDERS},
+}
 
 def _client(path):
     client = TestClient(build_app(SnapshotStore(), load_config(path)))

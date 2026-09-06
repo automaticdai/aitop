@@ -4,6 +4,7 @@ from ..models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 
 _MOCK_QUOTAS: dict[str, tuple[Quota, Quota]] = {
     "glm": (Quota(24, 100, "%", "Reset in 2h 30m"), Quota(15, 100, "%", "Reset in 4d 2h 0m")),
+    "minimax": (Quota(180, 600, "requests", "Reset in 1h 45m"), Quota(1420, 5000, "requests", "Reset in 3d 8h 0m")),
     "claude": (Quota(2.5, 5.0, "hours", "Reset in 2h 30m"), Quota(9.0, 25.0, "hours", "Reset in 97h 24m")),
     "codex": (Quota(12, 50, "messages", "Reset in 3h 15m"), Quota(30, 200, "messages", "Reset in 120h 10m")),
 }
@@ -24,6 +25,8 @@ class MockProvider:
     async def fetch(self) -> UsageSnapshot:
         if self.name == "deepseek":
             return UsageSnapshot(self.name, balance=Balance(225.05, "CNY"))
+        if self.name == "kimi":
+            return UsageSnapshot(self.name, client_info="Kimi API", balance=Balance(49.59, "USD"))
         if self.name == "openrouter":
             # Balance plus uncapped spend windows -- the one provider shape
             # that exercises the Spend block, so --mock demonstrates it.
