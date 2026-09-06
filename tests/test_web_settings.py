@@ -18,7 +18,7 @@ PREFERENCES = {
 }
 
 
-EXPECTED_PREFS = {**PREFERENCES, "glm_api_key_configured": bool(os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY"))}
+EXPECTED_PREFS = {**PREFERENCES, "glm_api_key_configured": bool(os.environ.get("GLM_API_KEY") or os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(os.environ.get("DEEPSEEK_API_KEY")), "openrouter_api_key_configured": bool(os.environ.get("OPENROUTER_API_KEY"))}
 
 def _client(path):
     client = TestClient(build_app(SnapshotStore(), load_config(path)))

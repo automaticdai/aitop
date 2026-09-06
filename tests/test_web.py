@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 
 from aitop import web as web_module
 from aitop.config import Config, ProviderConfig, WebLayout, load_config
-from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
+from aitop.models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 from aitop.web import (
     INDEX_HTML,
     SnapshotStore,
@@ -115,6 +115,7 @@ def test_snapshot_to_dict_empty_snapshot_has_null_fields():
     assert d["daily"] is None
     assert d["weekly"] is None
     assert d["balance"] is None
+    assert d["spend"] == []
     assert d["groups"] == []
     assert d["client_info"] is None
 
@@ -129,6 +130,31 @@ def test_snapshot_to_dict_includes_client_info():
 def test_index_js_renders_client_info():
     assert "s.client_info" in INDEX_HTML
     assert "client-info" in INDEX_HTML
+
+
+def test_snapshot_to_dict_serializes_spend():
+    snap = UsageSnapshot("openrouter", spend=[Spend("today", 1.2, "USD"), Spend("this week", 8.44, "USD")])
+    d = snapshot_to_dict(snap)
+    assert d["spend"] == [{"label": "today", "amount": 1.2, "currency": "USD"},
+                          {"label": "this week", "amount": 8.44, "currency": "USD"}]
+    assert d["has_data"] is True
+
+
+def test_index_js_renders_spend_rows():
+    config = Config.defaults()
+    config.layout.adaptive = True
+    config.providers["openrouter"].enabled = True
+    rendered = _render_in_js(config, [snapshot_to_dict(
+        UsageSnapshot("openrouter", ok=True, balance=Balance(42.13, "USD"),
+                      spend=[Spend("today", 1.2, "USD"), Spend("this month", 31.02, "USD")]))])
+    html = rendered["html"]
+    assert "42.13 USD" in html
+    assert '<div class="spend-label">spend</div>' in html
+    assert "today" in html and "1.20 USD" in html
+    assert "this month" in html and "31.02 USD" in html
+    # No limit means no bar: a spend row must not render one.
+    assert html.count("bar-fill") == 0
+    assert "no data" not in html
 
 
 def test_snapshot_to_dict_serializes_balance_and_groups():
@@ -292,6 +318,7 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
         "provider_order": ["codex", "claude"],
         "enabled_providers": ["claude", "codex"],
         "glm_api_key_configured": bool(web_module.os.environ.get("GLM_API_KEY") or web_module.os.environ.get("ZAI_API_KEY")), "glm_region": "global", "deepseek_api_key_configured": bool(web_module.os.environ.get("DEEPSEEK_API_KEY")),
+        "openrouter_api_key_configured": bool(web_module.os.environ.get("OPENROUTER_API_KEY")),
     }
     assert page_config == {
         "adaptive": False,
@@ -613,7 +640,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
     assert json.loads(cancelled["writes"][0]["body"])["show_claude_gpt"] is True
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter"])
 def test_provider_logos_are_served_locally_and_in_loading_cards(provider):
     client = TestClient(build_app(SnapshotStore()))
     response = client.get(f"/logos/{provider}.svg")

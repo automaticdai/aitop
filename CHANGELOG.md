@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## v1.1 — 2026-09-06
 
 - Add GLM Coding Plan quota monitoring for Z.ai and BigModel accounts.
 - Report GLM account errors clearly and replace outdated dashboard errors when no valid usage was fetched.
 - Add compact, automatically saved API key and region controls, disabled when their provider is off. GLM is opt-in.
+- Add OpenRouter credit and spend monitoring from an API key. A key with a spending limit reports what is left on it; an uncapped key falls back to the account's credits, and drops the balance rather than failing if that endpoint is refused.
+- Show uncapped spend windows (today, this week, this month) as plain amounts in both interfaces, since they have no vendor-set cap to draw a bar from. OpenRouter is opt-in.
+
+Upgrade the package, restart aitop, and reload the browser. Enable GLM or OpenRouter under **Menu → Providers** and enter an API key for each you want polled.
 
 ## v1.0.1 — 2026-09-06
 

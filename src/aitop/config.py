@@ -15,9 +15,9 @@ import tomlkit
 # (where "current working directory" no longer means "the project folder").
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
-PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm")
+PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter")
 
-API_KEY_PROVIDERS = ("deepseek", "glm")
+API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter")
 REGIONAL_PROVIDERS = ("glm",)
 
 
@@ -127,7 +127,8 @@ class Config:
 
     @classmethod
     def defaults(cls) -> "Config":
-        return cls(providers={name: ProviderConfig(enabled=name not in ("copilot", "glm")) for name in PROVIDER_NAMES})
+        return cls(providers={name: ProviderConfig(enabled=name not in ("copilot", "glm", "openrouter"))
+                             for name in PROVIDER_NAMES})
 
 
 def place_providers(

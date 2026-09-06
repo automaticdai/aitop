@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..models import Balance, Quota, QuotaGroup, UsageSnapshot
+from ..models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 
 _MOCK_QUOTAS: dict[str, tuple[Quota, Quota]] = {
     "glm": (Quota(24, 100, "%", "Reset in 2h 30m"), Quota(15, 100, "%", "Reset in 4d 2h 0m")),
@@ -24,6 +24,13 @@ class MockProvider:
     async def fetch(self) -> UsageSnapshot:
         if self.name == "deepseek":
             return UsageSnapshot(self.name, balance=Balance(225.05, "CNY"))
+        if self.name == "openrouter":
+            # Balance plus uncapped spend windows -- the one provider shape
+            # that exercises the Spend block, so --mock demonstrates it.
+            return UsageSnapshot(self.name, client_info="OpenRouter API",
+                                 balance=Balance(42.13, "USD"),
+                                 spend=[Spend("today", 1.2, "USD"), Spend("this week", 8.44, "USD"),
+                                        Spend("this month", 31.02, "USD")])
         if self.name == "gemini":
             return UsageSnapshot(self.name, groups=_MOCK_GEMINI_GROUPS)
         if self.name == "copilot":

@@ -1,8 +1,8 @@
 # aitop
 
-Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, and GLM** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
+Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, and OpenRouter** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
-See the [v1.0.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
+See the [v1.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
 ## Install
 
@@ -67,12 +67,17 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
 | GLM | API key in **Menu**, or `GLM_API_KEY`; choose Z.ai or BigModel | HTTPS Coding Plan quota API |
 | GitHub Copilot | `gh auth login`, or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | HTTPS account quotas |
+| OpenRouter | API key in **Menu**, or `OPENROUTER_API_KEY` | HTTPS key and credits API |
 
-Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek shows an account balance rather than a quota bar.
+Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek and OpenRouter show an account balance rather than a quota bar.
 
 Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
 
 Enable **GLM** under **Menu → Providers**, select your account's region, and enter its API key. Changes save automatically. GLM is off by default. GLM uses the [official usage plugin's quota endpoint](https://github.com/zai-org/zai-coding-plugins/blob/main/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs) to show Coding Plan session, weekly, and MCP tool quotas when returned. The official usage plugin supports personal Coding Plans. A pay-as-you-go key alone does not provide these plan quotas. This integration only reads usage; it does not make model requests.
+
+Enable **OpenRouter** under **Menu → Providers** and enter an API key; it is off by default. The card shows credits left plus spend for today, this week, and this month. Spend windows have no vendor-set cap, so they appear as plain amounts rather than bars, and a free-tier key is labelled as such under the logo.
+
+Where the balance comes from depends on the key. A key with a spending limit reports what is left on that limit, which is what decides whether its next call succeeds. A key with no limit falls back to the account's own credits (purchased credits less lifetime usage). OpenRouter documents that second endpoint as needing a [provisioning key](https://openrouter.ai/docs/features/provisioning-api-keys), but an ordinary inference key reads it in practice; if an account does refuse it, the card drops the balance and shows spend alone rather than failing. A new account with no purchased credits correctly reads `0.00 USD` — free models still work at that balance. This integration only reads usage; it does not make model requests.
 
 GLM also accepts `ZAI_API_KEY` for the Global region or `ZHIPU_API_KEY` for China, after `GLM_API_KEY`. Saved keys take precedence. When running aitop as a service, set environment keys in that service's environment, or use the Menu. API key fields stay blank after saving and are disabled when their provider is off.
 

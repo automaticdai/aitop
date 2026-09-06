@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 
 from textual.markup import escape
 
-from .models import Quota, QuotaGroup, UsageSnapshot
+from .models import Quota, QuotaGroup, Spend, UsageSnapshot
 from .reset_timer import format_reset_note
 
 # Spec §6 color thresholds for the usage bars: green below 70%, amber
@@ -41,6 +41,7 @@ DISPLAY_NAME = {
     "deepseek": "DeepSeek",
     "copilot": "GitHub Copilot",
     "glm": "GLM",
+    "openrouter": "OpenRouter",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -65,6 +66,7 @@ _FONT: dict[str, tuple[str, str, str, str, str]] = {
     "R": ("### ", "#  #", "### ", "# # ", "#  #"),
     "S": (" ###", "#   ", " ## ", "   #", "### "),
     "T": ("####", " #  ", " #  ", " #  ", " #  "),
+    "U": ("#  #", "#  #", "#  #", "#  #", " ## "),
 }
 
 
@@ -96,6 +98,7 @@ LOGOS = {
     "deepseek": f"[#4D6BFE]{_text_art('DEEPSEEK')}[/]",  # DeepSeek blue
     "glm": f"[#4D6BFE]{_text_art('GLM')}[/]",
     "copilot": f"[#A78BFA]{_text_art('COPILOT')}[/]",
+    "openrouter": f"[#6467F2]{_text_art('OPENROUTER')}[/]",  # OpenRouter indigo
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -110,6 +113,7 @@ LOGO_WIDTH = {
     "deepseek": 5 * len("DEEPSEEK") - 1,
     "glm": 5 * len("GLM") - 1,
     "copilot": 5 * len("COPILOT") - 1,
+    "openrouter": 5 * len("OPENROUTER") - 1,
 }
 
 
@@ -149,6 +153,7 @@ def has_data(snap: UsageSnapshot) -> bool:
         or snap.weekly is not None
         or snap.monthly is not None
         or snap.balance is not None
+        or bool(snap.spend)
         or bool(snap.groups)
     )
 
@@ -351,8 +356,28 @@ def _value_lines(snap: UsageSnapshot, width: int | None = None, display: QuotaDi
         lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")
         if not b.available:
             lines.append("         [red]insufficient for API calls[/red]")
+    if snap.spend:
+        lines.extend(_spend_lines(snap.spend))
     lines.extend(_group_lines(snap.groups or [], width, display))
     return lines
+
+
+def _spend_lines(spend: list[Spend]) -> list[str]:
+    """Uncapped per-window spend as a labelled block under the balance.
+
+    There is no limit to divide these by, so they get no bar and no color --
+    a dim heading (the same treatment a QuotaGroup's label gets) over a label
+    column and a decimal-aligned amount is what makes them read as one set.
+    Widths come from the actual rows because "this month" is wider than
+    LABEL_WIDTH and an amount can be anything from 0.00 to four figures.
+    """
+    labels = max(len(s.label) for s in spend) + 2
+    amounts = [f"{s.amount:.2f}" for s in spend]
+    values = max(len(a) for a in amounts)
+    return ["[dim]spend[/dim]", *(
+        f"{s.label:<{labels}}{amount:>{values}} {escape(s.currency)}"
+        for s, amount in zip(spend, amounts)
+    )]
 
 
 def _with_logo(provider: str, body: str, width: int | None = None) -> str:

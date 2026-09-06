@@ -1,6 +1,6 @@
 import re
 
-from aitop.models import Balance, Quota, QuotaGroup, UsageSnapshot
+from aitop.models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 from aitop.render import (
     DISPLAY_NAME,
     LOGOS,
@@ -46,11 +46,12 @@ def test_display_name_maps_internal_keys_to_shown_text():
         "deepseek": "DeepSeek",
         "copilot": "GitHub Copilot",
         "glm": "GLM",
+        "openrouter": "OpenRouter",
     }
 
 
 def test_logos_cover_every_known_provider():
-    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek", "copilot", "glm"}
+    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter"}
 
 
 def test_render_snapshot_prepends_the_provider_logo():
@@ -153,6 +154,30 @@ def test_render_snapshot_balance_available_shows_no_warning():
     snap = UsageSnapshot("deepseek", balance=Balance(225.05, "CNY", available=True))
     out = render_snapshot(snap)
     assert "insufficient" not in out
+
+
+def test_render_snapshot_spend_block():
+    snap = UsageSnapshot("openrouter", balance=Balance(42.13, "USD"), spend=[
+        Spend("today", 1.2, "USD"), Spend("this week", 8.44, "USD"), Spend("this month", 31.02, "USD")])
+    out = render_snapshot(snap)
+    assert "42.13" in out
+    lines = out.splitlines()
+    assert "[dim]spend[/dim]" in lines
+    # No bar and no color: there is no limit to draw one from. Labels are
+    # padded past "this month" and the amounts share a right-aligned column,
+    # so the decimal points line up.
+    assert "today        1.20 USD" in lines
+    assert "this week    8.44 USD" in lines
+    assert "this month  31.02 USD" in lines
+    assert "█" not in out and "░" not in out
+
+
+def test_spend_alone_is_enough_to_render_a_card():
+    # An uncapped OpenRouter key whose account credits are out of reach has
+    # spend and nothing else -- that must be a real card, not "no data".
+    out = render_snapshot(UsageSnapshot("openrouter", spend=[Spend("today", 0.0, "USD")]))
+    assert "today  0.00 USD" in out
+    assert "no data" not in out
 
 
 def test_render_snapshot_error():
@@ -393,6 +418,7 @@ def test_has_data():
     assert has_data(UsageSnapshot("codex", monthly=Quota(5, 100, "%")))
     assert has_data(UsageSnapshot("deepseek", balance=Balance(1.0, "CNY")))
     assert has_data(UsageSnapshot("gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(1, 2, "%"))]))
+    assert has_data(UsageSnapshot("openrouter", spend=[Spend("today", 0.0, "USD")]))
     assert not has_data(UsageSnapshot("codex"))
 
 

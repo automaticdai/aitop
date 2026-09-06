@@ -31,6 +31,21 @@ class Balance:
 
 
 @dataclass
+class Spend:
+    """Money already spent over a window the vendor reports without a cap.
+
+    OpenRouter reports usage_daily/weekly/monthly as plain amounts with no
+    per-window limit to divide by, so these can't be Quotas -- there is no
+    percentage to draw a bar from, and Quota carries a unit rather than a
+    currency. Rendered as a labelled list under the balance.
+    """
+
+    label: str  # "today" | "this week" | "this month"
+    amount: float
+    currency: str
+
+
+@dataclass
 class QuotaGroup:
     """A named quota group for providers that report more than one pool
 
@@ -57,6 +72,8 @@ class UsageSnapshot:
     # that into `weekly` would misstate when the quota actually resets.
     monthly: Quota | None = None
     balance: Balance | None = None
+    # Uncapped per-window spend (see Spend); None = the provider reports none.
+    spend: list[Spend] | None = None
     groups: list[QuotaGroup] | None = None
     # Single-line client info for the card, e.g. "Claude Code v2.1.237" or
     # "DeepSeek API" (name-only when the client has no parseable version).

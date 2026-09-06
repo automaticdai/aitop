@@ -7,3 +7,6 @@ Downloaded 2026-09-06. Covered by the same MIT license in LICENSE.txt.
 
 glm.svg: packages/static-svg/icons/zai.svg
 Downloaded 2026-09-06 from the same MIT-licensed collection.
+
+openrouter.svg: packages/static-svg/icons/openrouter.svg
+Downloaded 2026-09-06 from the same MIT-licensed collection.

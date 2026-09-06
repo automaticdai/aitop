@@ -26,6 +26,15 @@ from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_
 
 log = logging.getLogger(__name__)
 
+# Every key the settings POST accepts. Derived from the provider tables so
+# that adding a keyed or regional provider can't silently leave its field
+# rejected by the request validator.
+_SETTINGS_FIELDS = (
+    {"layout", "show_claude_gpt", "provider_order", "enabled_providers"}
+    | {name + "_api_key" for name in API_KEY_PROVIDERS}
+    | {name + "_region" for name in REGIONAL_PROVIDERS}
+)
+
 
 def is_wsl() -> bool:
     """True under WSL2 (the kernel release carries "microsoft" / "WSL")."""
@@ -89,6 +98,10 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
             if balance is not None
             else None
         ),
+        "spend": [
+            {"label": item.label, "amount": item.amount, "currency": item.currency}
+            for item in (snap.spend or [])
+        ],
         "groups": [
             {"label": g.label, "daily": _quota(g.daily, snap.fetched_at), "weekly": _quota(g.weekly, snap.fetched_at),
              "monthly": _quota(g.monthly, snap.fetched_at)}
@@ -205,7 +218,7 @@ def build_app(
         except (ValueError, UnicodeDecodeError):
             return JSONResponse({"error": "Invalid settings JSON."}, status_code=400)
         if (not isinstance(data, dict) or not {"layout", "show_claude_gpt"} <= set(data)
-                or set(data) - {"layout", "show_claude_gpt", "provider_order", "enabled_providers", "deepseek_api_key", "glm_api_key", "glm_region"}):
+                or set(data) - _SETTINGS_FIELDS):
             return JSONResponse({"error": "Provide layout and show_claude_gpt settings."}, status_code=400)
         layout = data["layout"]
         api_keys, regions = {}, {}
@@ -371,7 +384,7 @@ INDEX_HTML = """<!doctype html>
   .drag-handle:active { cursor: grabbing; }
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
-  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm { filter: invert(1); } }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -387,6 +400,14 @@ INDEX_HTML = """<!doctype html>
   .bar-fill { height: 100%; border-radius: inherit; transition: width .3s ease; }
   .note { font-size: 12px; color: var(--muted); margin-top: 8px; }
   .balance { font-size: 13px; margin: 8px 0; }
+  /* Spend windows carry no limit, so they get no bar -- a dim heading over a
+     label/amount pair, matching the TUI's block and the group labels' muted
+     treatment. tabular-nums keeps the decimal points in a column. */
+  .spend { font-size: 13px; margin: 8px 0; }
+  .spend-label { color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+  .spend-row { display: flex; justify-content: space-between; gap: 12px; padding: 1px 0; }
+  .spend-row .name { color: var(--muted); }
+  .spend-row .amount { font-variant-numeric: tabular-nums; font-weight: 600; }
   /* Providers reporting more than one pool (Antigravity's Gemini and
      Claude & GPT-OSS groups) otherwise stack, making that card twice as tall
      as the others. auto-fit lays them out as columns whenever the card is
@@ -551,6 +572,17 @@ INDEX_HTML = """<!doctype html>
             </div>
           </div>
           <div class="provider-setting">
+            <div id="provider-toggle-openrouter"></div>
+            <div class="provider-options">
+              <div class="api-key-row">
+                <label for="openrouter-api-key">API key</label>
+                <input id="openrouter-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set or replace key" aria-describedby="openrouter-key-hint">
+              </div>
+              <p class="muted" id="openrouter-key-hint"><span id="openrouter-key-status"></span> Leave blank to keep.</p>
+            </div>
+          </div>
+          <div class="provider-setting">
             <div id="provider-toggle-deepseek"></div>
             <div class="provider-options">
               <div class="api-key-row">
@@ -611,9 +643,9 @@ INDEX_HTML = """<!doctype html>
     const layoutStatus = document.getElementById("layout-status");
     const layoutError = document.getElementById("layout-error");
     const saveStatus = document.getElementById("settings-save-status");
-    const retrySettings = document.getElementById("retry-settings");
     const apiKeyInput = document.getElementById("deepseek-api-key");
-    const keyedProviders = ['deepseek', 'glm'];
+    const retrySettings = document.getElementById("retry-settings");
+    const keyedProviders = ['deepseek', 'glm', 'openrouter'];
     const regionalProviders = ['glm'];
     let savedAccountSettings = CONFIG.settings;
     function keyStatus() {
@@ -1045,6 +1077,12 @@ INDEX_HTML = """<!doctype html>
       if (s.balance) {
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
           esc(s.balance.currency) + (s.balance.available ? "" : ' <span class="badge error">insufficient</span>') + "</div>";
+      }
+      if ((s.spend || []).length) {
+        body += '<div class="spend"><div class="spend-label">spend</div>' +
+          s.spend.map(item => '<div class="spend-row"><span class="name">' + esc(item.label) +
+            '</span><span class="amount">' + item.amount.toFixed(2) + " " + esc(item.currency) +
+            "</span></div>").join("") + "</div>";
       }
       const groups = (s.groups || []).filter(g => showClaudeGpt || s.provider !== "gemini" || g.label !== "Claude & GPT-OSS");
       if (groups.length) {
