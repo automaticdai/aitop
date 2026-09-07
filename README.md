@@ -2,7 +2,7 @@
 
 Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, and MiniMax** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
 
-See the [v1.2 release notes](CHANGELOG.md) for highlights and upgrade instructions.
+See the [v1.2.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
 ## Install
 
@@ -83,7 +83,7 @@ Where the balance comes from depends on the key. A key with a spending limit rep
 
 Enable **Kimi** under **Menu → Providers**, select the region matching your account, and enter its API key. Kimi is off by default. The card shows the pay-as-you-go balance from Moonshot's [balance endpoint](https://platform.kimi.ai/docs/api/balance). At or below zero the vendor rejects every call, so the card marks the balance as insufficient. Keys are issued per platform and are not interchangeable: a global key sent to the China host returns 401, which is why a failure names the region as well as the key. A **Kimi Code** subscription is a different product with its own request quotas and no published API; this adapter does not read it.
 
-Enable **MiniMax** under **Menu → Providers**, select the region, and enter a Token Plan key. MiniMax is off by default. The card shows the Token Plan's rolling 5-hour session window and its weekly window as request quotas. MiniMax does not publish a quota endpoint, so this adapter reads the same `token_plan/remains` route the community tooling uses; it is **not vendor-documented and may change or be withdrawn**. A pay-as-you-go key with no Token Plan reports that no plan was found rather than an error. This integration only reads usage; it does not make model requests.
+Enable **MiniMax** under **Menu → Providers**, select the region, and enter a Token Plan key. MiniMax is off by default. The card shows the Token Plan's rolling 5-hour session window and its weekly window as request quotas. MiniMax does not publish a quota endpoint, so this adapter reads the same `token_plan/remains` route the community tooling uses; it is **not vendor-documented and may change or be withdrawn**. The route and its `base_resp` envelope have been confirmed against a live account, but the shape of a populated quota response has not: an account without a subscription answers `2062`, which the card reports as no active Token Plan rather than as an error. A key aimed at the other region answers `2049`, reported as a key or region problem. This integration only reads usage; it does not make model requests.
 
 GLM also accepts `ZAI_API_KEY` for the Global region or `ZHIPU_API_KEY` for China, after `GLM_API_KEY`. Saved keys take precedence. When running aitop as a service, set environment keys in that service's environment, or use the Menu. API key fields stay blank after saving and are disabled when their provider is off.
 

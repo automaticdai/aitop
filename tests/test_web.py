@@ -141,6 +141,22 @@ def test_snapshot_to_dict_serializes_spend():
     assert d["has_data"] is True
 
 
+def test_provider_switches_are_toggled_only_by_the_switch():
+    # A <label for> (or a label wrapping the input) makes the provider's name
+    # a second click target, so brushing the text toggles the provider. The
+    # rows must not be labels, and the name must stay attached to the input
+    # for assistive tech instead.
+    rendered = _render_in_js(Config.defaults(), [], "openSettings();")
+    switches = rendered["providerSwitchHtml"]
+    assert "<label" not in switches and "for=" not in switches
+    for name in ("claude", "openrouter"):
+        assert f'<span id="provider-{name}-label">' in switches
+        assert f'aria-labelledby="provider-{name}-label"' in switches
+    # The same applies to the one sub-option built with this widget.
+    assert '<label class="toggle-setting"' not in INDEX_HTML
+    assert 'aria-labelledby="show-claude-gpt-label"' in INDEX_HTML
+
+
 def test_index_js_renders_spend_rows():
     config = Config.defaults()
     config.layout.adaptive = True
@@ -415,6 +431,8 @@ process.stdout.write(JSON.stringify({loading, html: cards.innerHTML, style: card
   classes: [...classes], interval, writes, status: element('layout-status').textContent,
   error: element('layout-error').textContent, errorHidden: element('layout-error').hidden,
   orderHtml: element('provider-order').innerHTML,
+  providerSwitchHtml: Object.keys(elements).filter(id => id.startsWith('provider-toggle-'))
+    .map(id => elements[id].innerHTML).join(''),
   open: element('settings').open}));
 })().catch(error => { console.error(error); process.exit(1); });
 """

@@ -473,7 +473,10 @@ INDEX_HTML = """<!doctype html>
   #retry-settings { margin-top: 8px; }
   .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   .settings .toggle-setting { display: flex; justify-content: space-between; align-items: center;
-                              gap: 20px; padding-top: 20px; margin: 24px 0 0; border-top: 1px solid var(--border); }
+                              gap: 20px; padding-top: 20px; margin: 24px 0 0; border-top: 1px solid var(--border);
+                              /* Inherited from `.settings label` until these rows stopped being
+                                 labels; restated here so the switch alone stays the click target. */
+                              font-size: 13px; font-weight: 600; }
   .toggle-setting small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
   #provider-switches .toggle-setting { margin: 0; padding: 10px 0; border-top: 0; }
   #provider-switches .provider-options .toggle-setting { padding: 4px 0; font-size: 12px; font-weight: 500; }
@@ -550,10 +553,11 @@ INDEX_HTML = """<!doctype html>
           <div class="provider-setting">
             <div id="provider-toggle-gemini"></div>
             <div class="provider-options">
-              <label class="toggle-setting" for="show-claude-gpt">
-                <span>Claude &amp; GPT-OSS</span>
-                <input id="show-claude-gpt" type="checkbox" role="switch">
-              </label>
+              <div class="toggle-setting">
+                <span id="show-claude-gpt-label">Claude &amp; GPT-OSS</span>
+                <input id="show-claude-gpt" type="checkbox" role="switch"
+                       aria-labelledby="show-claude-gpt-label">
+              </div>
             </div>
           </div>
           <div class="provider-setting">
@@ -900,10 +904,14 @@ INDEX_HTML = """<!doctype html>
     function renderProviderSwitches() {
       Object.keys(CONFIG.display_names).forEach(name => {
         document.getElementById('provider-toggle-' + name).innerHTML =
-        '<label class="toggle-setting" for="provider-' + name + '"><span>' +
+        // A <label for> would make the provider's name a second click
+        // target, so brushing the text silently toggled the provider. The
+        // switch alone is clickable now; aria-labelledby keeps the name
+        // attached for screen readers and the accessibility tree.
+        '<div class="toggle-setting"><span id="provider-' + name + '-label">' +
         esc(CONFIG.display_names[name]) + '</span><input id="provider-' + name +
-        '" data-provider="' + name + '" type="checkbox" role="switch"' +
-        (providerNames.includes(name) ? ' checked' : '') + '></label>';
+        '" data-provider="' + name + '" type="checkbox" role="switch" aria-labelledby="provider-' +
+        name + '-label"' + (providerNames.includes(name) ? ' checked' : '') + '></div>';
       });
       updateProviderOptions();
     }

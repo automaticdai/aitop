@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.2.1 — 2026-09-07
+
+- Read MiniMax's `base_resp` status codes, confirmed against a live account: report an absent Token Plan subscription and a wrong-region key distinctly instead of inferring both from missing counters.
+- Search MiniMax's `model_remains` payload through lists as well as objects, since a subscribed account may report per-model entries.
+- Toggle providers from the switch only. The Menu rows were labels, so clicking a provider's name silently turned it on or off; the name is now tied to its switch with `aria-labelledby` instead.
+
+Upgrade the package, restart aitop, and reload the browser.
+
 ## v1.2 — 2026-09-06
 
 - Add Kimi pay-as-you-go balance monitoring for Moonshot Global and China accounts, marking a balance at or below zero as insufficient because the vendor then rejects every call.

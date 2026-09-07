@@ -67,8 +67,46 @@ def test_response_without_counters_reports_a_missing_token_plan(region, platform
     # What a pay-as-you-go key (no Token Plan) is expected to produce.
     result = asyncio.run(_provider({"base_resp": {"status_code": 0}}, api_key="k", region=region).fetch())
     assert not result.ok
-    assert "No Token Plan" in result.error and platform in result.error
+    assert "Token Plan" in result.error and platform in result.error
     assert "Invalid" not in result.error
+
+
+# Captured live from https://www.minimaxi.com/v1/token_plan/remains with a
+# China key on an account holding no subscription, and from the global host
+# with that same (China-only) key. These pin the real envelope.
+LIVE_NO_SUBSCRIPTION = {"model_remains": None,
+                        "base_resp": {"status_code": 2062, "status_msg": "no active token plan subscription"}}
+LIVE_INVALID_KEY = {"base_resp": {"status_code": 2049, "status_msg": "invalid api key"}}
+
+
+@pytest.mark.parametrize("region,platform", [("global", "MiniMax Global"), ("china", "MiniMax China")])
+def test_live_no_subscription_response(region, platform):
+    result = asyncio.run(_provider(LIVE_NO_SUBSCRIPTION, api_key="k", region=region).fetch())
+    assert not result.ok
+    assert "No active Token Plan subscription" in result.error and platform in result.error
+
+
+def test_live_invalid_key_response_names_the_region():
+    # A key is valid on one platform only, so this is what a right key aimed
+    # at the wrong host produces -- the message has to mention the region.
+    result = asyncio.run(_provider(LIVE_INVALID_KEY, api_key="secret").fetch())
+    assert not result.ok and "region" in result.error
+    assert "secret" not in result.error and "invalid api key" not in result.error
+
+
+def test_other_status_codes_report_the_code_without_the_vendor_message():
+    payload = {"base_resp": {"status_code": 1004, "status_msg": "auth failed for private@example.test"}}
+    result = asyncio.run(_provider(payload, api_key="k").fetch())
+    assert "status 1004" in result.error
+    assert "private@example.test" not in result.error
+
+
+def test_counters_are_found_inside_a_list_of_model_entries():
+    # A subscribed account populates model_remains, whose shape is unknown --
+    # it may well be a list of per-model entries, so the search walks lists.
+    payload = {"model_remains": [{"model": "MiniMax-M2", **COUNTERS}], "base_resp": {"status_code": 0}}
+    result = asyncio.run(_provider(payload, api_key="k").fetch())
+    assert result.ok and result.daily.pct == 30.0 and result.weekly.pct == 28.4
 
 
 @pytest.mark.parametrize("payload", [
