@@ -470,6 +470,18 @@ INDEX_HTML = """<!doctype html>
   .settings .provider-options { margin: 0 0 4px 12px; padding-left: 12px; border-left: 2px solid var(--border); }
   .settings .provider-options:has(:disabled) { opacity: .55; }
   .api-key-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; }
+  /* Region and key share a line once a section is open; the narrow-screen
+     block below drops them back to the two-column stack. */
+  .api-key-row.pair { grid-template-columns: auto minmax(0, 7em) auto minmax(0, 1fr); }
+  /* The chevron sits beside the switch rather than between name and switch,
+     so the provider name keeps the whole left edge. */
+  #provider-switches .toggle-setting span { flex: 1; min-width: 0; }
+  .disclose { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+              padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+  .disclose:hover { background: var(--soft); color: var(--text); }
+  .disclose svg { pointer-events: none; transition: transform .15s ease; }
+  .disclose[aria-expanded="true"] svg { transform: rotate(90deg); }
+  .disclose:disabled { opacity: .4; cursor: not-allowed; }
   .settings .api-key-row label { margin: 0; font-size: 12px; font-weight: 500; }
   .settings .api-key-row + .api-key-row { margin-top: 6px; }
   .settings .api-key-row input, .settings .api-key-row select { padding: 7px 9px; font-size: 12px; }
@@ -491,7 +503,7 @@ INDEX_HTML = """<!doctype html>
                                  labels; restated here so the switch alone stays the click target. */
                               font-size: 13px; font-weight: 600; }
   .toggle-setting small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
-  #provider-switches .toggle-setting { margin: 0; padding: 10px 0; border-top: 0; }
+  #provider-switches .toggle-setting { margin: 0; padding: 8px 0; border-top: 0; }
   #provider-switches .provider-options .toggle-setting { padding: 4px 0; font-size: 12px; font-weight: 500; }
   .settings input[role="switch"] { appearance: none; flex-shrink: 0; width: 38px; height: 22px;
                                      padding: 2px; border: 0; border-radius: 12px; background: var(--muted); cursor: pointer; }
@@ -515,6 +527,7 @@ INDEX_HTML = """<!doctype html>
     #cards { gap: 16px; }
     .card { padding: 18px; border-radius: 12px; }
     .settings { padding: 22px; }
+    .api-key-row.pair { grid-template-columns: auto minmax(0, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) { .bar-fill { transition: none; } }
 </style>
@@ -552,7 +565,7 @@ INDEX_HTML = """<!doctype html>
                 aria-selected="false" aria-controls="menu-panel-layouts">Layouts</button>
       </div>
       <section class="menu-section" id="menu-panel-providers" role="tabpanel" aria-labelledby="menu-tab-providers">
-        <p class="muted">Turn providers on or off. Disabled providers are not polled.</p>
+        <p class="muted">Disabled providers are not polled.</p>
         <div id="provider-switches">
           <div class="provider-setting">
             <div id="provider-toggle-claude"></div>
@@ -565,7 +578,7 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-gemini"></div>
-            <div class="provider-options">
+            <div class="provider-options" id="gemini-options" hidden>
               <div class="toggle-setting">
                 <span id="show-claude-gpt-label">Claude &amp; GPT-OSS</span>
                 <input id="show-claude-gpt" type="checkbox" role="switch"
@@ -575,13 +588,11 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-glm"></div>
-            <div class="provider-options">
-              <div class="api-key-row">
+            <div class="provider-options" id="glm-options" hidden>
+              <div class="api-key-row pair">
                 <label for="glm-region">Region</label>
                 <select id="glm-region"><option value="global">Z.ai</option><option value="china">BigModel</option></select>
-              </div>
-              <div class="api-key-row">
-                <label for="glm-api-key">API key</label>
+                <label for="glm-api-key">Key</label>
                 <input id="glm-api-key" type="password" autocomplete="new-password" spellcheck="false"
                        maxlength="512" placeholder="Set key">
               </div>
@@ -589,13 +600,11 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-kimi"></div>
-            <div class="provider-options">
-              <div class="api-key-row">
+            <div class="provider-options" id="kimi-options" hidden>
+              <div class="api-key-row pair">
                 <label for="kimi-region">Region</label>
                 <select id="kimi-region"><option value="global">Moonshot Global</option><option value="china">Moonshot China</option></select>
-              </div>
-              <div class="api-key-row">
-                <label for="kimi-api-key">API key</label>
+                <label for="kimi-api-key">Key</label>
                 <input id="kimi-api-key" type="password" autocomplete="new-password" spellcheck="false"
                        maxlength="512" placeholder="Set key">
               </div>
@@ -603,13 +612,11 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-minimax"></div>
-            <div class="provider-options">
-              <div class="api-key-row">
+            <div class="provider-options" id="minimax-options" hidden>
+              <div class="api-key-row pair">
                 <label for="minimax-region">Region</label>
                 <select id="minimax-region"><option value="global">MiniMax Global</option><option value="china">MiniMax China</option></select>
-              </div>
-              <div class="api-key-row">
-                <label for="minimax-api-key">API key</label>
+                <label for="minimax-api-key">Key</label>
                 <input id="minimax-api-key" type="password" autocomplete="new-password" spellcheck="false"
                        maxlength="512" placeholder="Set key">
               </div>
@@ -617,7 +624,7 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-openrouter"></div>
-            <div class="provider-options">
+            <div class="provider-options" id="openrouter-options" hidden>
               <div class="api-key-row">
                 <label for="openrouter-api-key">API key</label>
                 <input id="openrouter-api-key" type="password" autocomplete="new-password" spellcheck="false"
@@ -627,7 +634,7 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting">
             <div id="provider-toggle-deepseek"></div>
-            <div class="provider-options">
+            <div class="provider-options" id="deepseek-options" hidden>
               <div class="api-key-row">
                 <label for="deepseek-api-key">API key</label>
                 <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
@@ -657,7 +664,6 @@ INDEX_HTML = """<!doctype html>
       <p class="muted hint" id="layout-hint"></p>
       <div class="order-section" role="group" aria-labelledby="order-title">
         <h3 id="order-title">Provider order</h3>
-        <p class="muted">Move cards earlier or later in the grid.</p>
         <ol class="provider-order" id="provider-order"></ol>
       </div>
       </section>
@@ -689,7 +695,21 @@ INDEX_HTML = """<!doctype html>
     const retrySettings = document.getElementById("retry-settings");
     const keyedProviders = ['deepseek', 'glm', 'openrouter', 'kimi', 'minimax'];
     const regionalProviders = ['glm', 'kimi', 'minimax'];
+    // Providers whose row owns a collapsible section. Gemini's is a display
+    // preference; the rest are credentials.
+    const optionProviders = ['gemini', ...keyedProviders];
     let savedAccountSettings = CONFIG.settings;
+    // Which sections are open. A view state, not a setting: it is recomputed
+    // every time the menu opens and never travels to the config file.
+    let expandedProviders = new Set();
+    function needsKey(name) {
+      return keyedProviders.includes(name) && !savedAccountSettings[name + '_api_key_configured'];
+    }
+    function resetDisclosure() {
+      // Open exactly the sections with something outstanding: a provider that
+      // is on but still has no key. Everything else starts out of the way.
+      expandedProviders = new Set(keyedProviders.filter(name => providerNames.includes(name) && needsKey(name)));
+    }
     function keyPlaceholders() {
       keyedProviders.forEach(name => {
         const masked = savedAccountSettings[name + '_api_key_masked'];
@@ -789,6 +809,7 @@ INDEX_HTML = """<!doctype html>
       selectMenuTab('providers');
       restoreAccountSettings();
       providerNames = [...savedEnabled];
+      resetDisclosure();
       activeOrder = [...savedOrder];
       renderProviderSwitches();
       renderOrderControls();
@@ -807,6 +828,7 @@ INDEX_HTML = """<!doctype html>
       showClaudeGpt = savedShowClaudeGpt;
       providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
+      resetDisclosure();
       renderProviderSwitches();
       renderOrderControls();
       applyLayout(savedLayout);
@@ -918,11 +940,18 @@ INDEX_HTML = """<!doctype html>
         // switch alone is clickable now; aria-labelledby keeps the name
         // attached for screen readers and the accessibility tree.
         '<div class="toggle-setting"><span id="provider-' + name + '-label">' +
-        esc(CONFIG.display_names[name]) + '</span><input id="provider-' + name +
+        esc(CONFIG.display_names[name]) + '</span>' + discloseButton(name) + '<input id="provider-' + name +
         '" data-provider="' + name + '" type="checkbox" role="switch" aria-labelledby="provider-' +
         name + '-label"' + (providerNames.includes(name) ? ' checked' : '') + '></div>';
       });
       updateProviderOptions();
+    }
+    function discloseButton(name) {
+      if (!optionProviders.includes(name)) return '';
+      return '<button type="button" class="disclose" id="disclose-' + name + '" data-disclose="' + name + '" aria-expanded="' +
+        expandedProviders.has(name) + '" aria-controls="' + name + '-options" aria-label="Settings for ' +
+        esc(CONFIG.display_names[name]) + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>';
     }
     function updateProviderOptions() {
       groupInput.disabled = !providerNames.includes('gemini');
@@ -932,7 +961,23 @@ INDEX_HTML = """<!doctype html>
       regionalProviders.forEach(name => {
         document.getElementById(name + '-region').disabled = !providerNames.includes(name);
       });
+      // Collapsing only hides: the inputs stay enabled and keep their values,
+      // so a save still carries a closed section's key exactly as before.
+      // The chevron is patched in place rather than re-rendered, which would
+      // destroy the switch a keyboard user is standing on.
+      optionProviders.forEach(name => {
+        const open = expandedProviders.has(name);
+        document.getElementById(name + '-options').hidden = !open;
+        document.getElementById('disclose-' + name).setAttribute('aria-expanded', open);
+      });
     }
+    providerSwitches.addEventListener('click', event => {
+      const name = event.target.dataset.disclose;
+      if (!name) return;
+      if (expandedProviders.has(name)) expandedProviders.delete(name);
+      else expandedProviders.add(name);
+      updateProviderOptions();
+    });
     providerSwitches.addEventListener('change', event => {
       const input = event.target;
       const name = input.dataset.provider;
@@ -940,9 +985,13 @@ INDEX_HTML = """<!doctype html>
       if (input.checked) {
         if (!providerNames.includes(name)) providerNames.push(name);
         if (!activeOrder.includes(name)) activeOrder.push(name);
+        // Turning on a provider that has no key yet is the one moment its
+        // fields are worth showing unprompted.
+        if (needsKey(name)) expandedProviders.add(name);
       } else {
         providerNames = providerNames.filter(provider => provider !== name);
         activeOrder = activeOrder.filter(provider => provider !== name);
+        expandedProviders.delete(name);
       }
       updateProviderOptions();
       if (modeInput.value === 'custom' && Number(columnsInput.value) >= 1) {

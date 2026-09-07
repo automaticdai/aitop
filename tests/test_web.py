@@ -399,9 +399,11 @@ const classes = new Set();
 const elements = {};
 function element(id) {
   if (!elements[id]) elements[id] = {
-    style: {}, value: '', hidden: false, textContent: '', listeners: {},
+    style: {}, value: '', hidden: false, textContent: '', listeners: {}, attrs: {},
     classList: {toggle: (name, enabled) => enabled ? classes.add(name) : classes.delete(name)},
     addEventListener(name, fn) { this.listeners[name] = fn; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    getAttribute(name) { return this.attrs[name]; },
     querySelector() { return null; },
     querySelectorAll() { return []; },
     focus() {},
@@ -418,8 +420,10 @@ const context = vm.createContext({
   fetch: (url, options) => {
     if (!options) return new Promise(() => {});
     writes.push({url, ...options});
+    // Mirror the endpoint's shape, not just the echoed body: the page reads
+    // key/region state back out of the response after every save.
     return Promise.resolve({ok: !input.api_error, json: async () => input.api_error
-      ? {error: input.api_error} : {enabled_providers: input.enabled_providers, ...JSON.parse(options.body)}});
+      ? {error: input.api_error} : {...input.settings, ...JSON.parse(options.body)}});
   },
   setInterval: (fn, ms) => { interval = ms; },
   setTimeout: () => 1, clearTimeout: () => {},
@@ -435,13 +439,17 @@ process.stdout.write(JSON.stringify({loading, html: cards.innerHTML, style: card
   orderHtml: element('provider-order').innerHTML,
   providerSwitchHtml: Object.keys(elements).filter(id => id.startsWith('provider-toggle-'))
     .map(id => elements[id].innerHTML).join(''),
+  optionsHidden: Object.fromEntries(Object.keys(elements).filter(id => id.endsWith('-options'))
+    .map(id => [id.replace('-options', ''), elements[id].hidden])),
+  discloseExpanded: Object.fromEntries(Object.keys(elements).filter(id => id.startsWith('disclose-'))
+    .map(id => [id.replace('disclose-', ''), elements[id].attrs['aria-expanded']])),
   open: element('settings').open}));
 })().catch(error => { console.error(error); process.exit(1); });
 """
     result = subprocess.run(
         [node, "-e", harness], input=json.dumps({
             "script": script, "data": data, "actions": actions,
-            "api_error": api_error, "enabled_providers": _page_config(TestClient(build_app(SnapshotStore(), config)))["settings"]["enabled_providers"],
+            "api_error": api_error, "settings": _page_config(TestClient(build_app(SnapshotStore(), config)))["settings"],
         }),
         text=True, capture_output=True, check=True, timeout=10,
     )
@@ -606,6 +614,86 @@ def test_autosave_debounces_key_edits_and_flushes_on_close():
     assert len(rendered["writes"]) == 1
     assert json.loads(rendered["writes"][0]["body"])["deepseek_api_key"] == "test-complete-key"
     assert rendered["open"] is False
+
+
+def _keyless(monkeypatch):
+    """A config whose keyed providers really have no key, env included."""
+    for name in API_KEY_PROVIDERS:
+        for var in (name.upper() + "_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY", "MOONSHOT_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+    return Config.defaults()
+
+
+def test_menu_keeps_a_configured_providers_options_collapsed(monkeypatch):
+    # The five keyed providers used to render their key and region rows
+    # permanently, which is most of the menu's height. Once a key is stored
+    # there is nothing to act on, so the section starts closed.
+    cfg = _keyless(monkeypatch)
+    cfg.providers["glm"].enabled = True
+    cfg.providers["glm"].api_key = "test-glm-credential"
+    cfg.providers["deepseek"].api_key = "test-deepseek-credential"
+    rendered = _render_in_js(cfg, [], "openSettings();")
+    assert rendered["optionsHidden"]["glm"] is True
+    assert rendered["optionsHidden"]["deepseek"] is True
+    assert 'data-disclose="glm"' in rendered["providerSwitchHtml"]
+    assert 'aria-expanded="false"' in rendered["providerSwitchHtml"]
+    # Providers with nothing to configure get no chevron at all.
+    assert 'data-disclose="claude"' not in rendered["providerSwitchHtml"]
+
+
+def test_menu_opens_expanded_where_an_enabled_provider_still_needs_a_key(monkeypatch):
+    cfg = _keyless(monkeypatch)
+    cfg.layout.adaptive = True  # so the extra provider actually gets a cell
+    cfg.providers["glm"].enabled = True
+    rendered = _render_in_js(cfg, [], "openSettings();")
+    assert rendered["optionsHidden"]["glm"] is False
+    assert rendered["optionsHidden"]["deepseek"] is False
+    assert 'data-disclose="glm" aria-expanded="true"' in rendered["providerSwitchHtml"]
+    # Gemini's options are a preference, not setup, so they stay out of the way.
+    assert rendered["optionsHidden"]["gemini"] is True
+    # So do a keyless provider's options while the provider itself is off.
+    assert rendered["optionsHidden"]["kimi"] is True
+
+
+def test_disclosure_chevron_opens_and_closes_a_provider_section(monkeypatch):
+    cfg = _keyless(monkeypatch)
+    cfg.providers["glm"].enabled = True
+    cfg.providers["glm"].api_key = "test-glm-credential"
+    opened = _render_in_js(cfg, [], """
+      openSettings(); providerSwitches.listeners.click({target: {dataset: {disclose: 'glm'}}});
+    """)
+    assert opened["optionsHidden"]["glm"] is False
+    assert opened["discloseExpanded"]["glm"] == "true"
+    closed = _render_in_js(cfg, [], """
+      openSettings();
+      providerSwitches.listeners.click({target: {dataset: {disclose: 'glm'}}});
+      providerSwitches.listeners.click({target: {dataset: {disclose: 'glm'}}});
+    """)
+    assert closed["optionsHidden"]["glm"] is True
+    assert closed["discloseExpanded"]["glm"] == "false"
+    # Opening a section is a view preference, not a setting worth a request.
+    assert opened["writes"] == [] and closed["writes"] == []
+
+
+def test_turning_on_a_provider_that_needs_a_key_reveals_its_fields(monkeypatch):
+    cfg = _keyless(monkeypatch)
+    rendered = _render_in_js(cfg, [], """
+      openSettings();
+      providerSwitches.listeners.change({target: {dataset: {provider: 'kimi'}, checked: true}});
+    """)
+    assert rendered["optionsHidden"]["kimi"] is False
+
+
+def test_a_collapsed_providers_key_still_saves(monkeypatch):
+    cfg = _keyless(monkeypatch)
+    cfg.providers["deepseek"].api_key = "test-deepseek-credential"
+    rendered = _render_in_js(cfg, [], """
+      openSettings();
+      apiKeyInput.value = 'test-replacement-key'; apiKeyInput.listeners.input();
+      await closeSettings();
+    """)
+    assert rendered["optionsHidden"]["deepseek"] is True
+    assert json.loads(rendered["writes"][0]["body"])["deepseek_api_key"] == "test-replacement-key"
 
 
 def test_invalid_layout_does_not_queue_a_save_or_close_the_menu():

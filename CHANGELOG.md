@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3 — 2026-09-07
+
+- Show the saved API key as a masked preview in each provider's field, replacing the "Key configured. Leave blank to keep." note. Only the last four characters reach the browser; the key itself never leaves the process, and leaving the field blank still keeps it.
+- Collapse each provider's key and region controls behind a chevron on its Menu row. A provider that is enabled but still has no key opens by itself, as does one you turn on, so setup stays in front of you.
+- Trim the Menu's explanatory lines and put region and key on one row, stacking them again on narrow screens. The Providers tab no longer scrolls on a laptop.
+
+Upgrade the package, restart aitop, and reload the browser.
+
 ## v1.2.1 — 2026-09-07
 
 - Read MiniMax's `base_resp` status codes, confirmed against a live account: report an absent Token Plan subscription and a wrong-region key distinctly instead of inferring both from missing counters.
