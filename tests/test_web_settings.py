@@ -9,7 +9,7 @@ from starlette.testclient import TestClient
 from aitop import config as config_module
 from aitop.config import (API_KEY_PROVIDERS, REGIONAL_PROVIDERS, ConfigError, WebLayout,
                           load_config, provider_api_key, save_web_settings)
-from aitop.web import SnapshotStore, build_app
+from aitop.web import SnapshotStore, build_app, mask_api_key
 
 
 PREFERENCES = {
@@ -25,6 +25,7 @@ PREFERENCES = {
 EXPECTED_PREFS = {
     **PREFERENCES,
     **{name + "_api_key_configured": bool(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
+    **{name + "_api_key_masked": mask_api_key(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
     **{name + "_region": "global" for name in REGIONAL_PROVIDERS},
 }
 
@@ -289,6 +290,27 @@ def test_deepseek_key_is_private_persistent_and_never_returned(tmp_path, monkeyp
     assert load_config(path).providers['deepseek'].api_key == secret
     restarted, _ = _client(path)
     assert restarted.get('/api/settings').json()['deepseek_api_key_configured'] is True
+
+
+def test_saved_key_is_shown_only_as_a_masked_preview(tmp_path, monkeypatch):
+    # The form has no "key configured" wording any more, so the masked tail is
+    # the only signal that a key is stored -- and it must stay a stand-in.
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    path = tmp_path / 'config.toml'
+    client, headers = _client(path)
+    assert client.get('/api/settings').json()['deepseek_api_key_masked'] == ''
+    secret = 'test-only-deepseek-credential'
+    saved = client.put('/api/settings', json={**PREFERENCES, 'deepseek_api_key': secret}, headers=headers)
+    assert saved.json()['deepseek_api_key_masked'] == '••••tial'
+    reopened = json.loads(re.search(r"const CONFIG = (.*);", client.get('/').text).group(1))
+    assert reopened['settings']['deepseek_api_key_masked'] == '••••tial'
+    assert secret not in saved.text + client.get('/').text
+
+
+@pytest.mark.parametrize('key, masked', [(None, ''), ('', ''), ('short', '•••••'),
+                                         ('exactly8', '••••••••'), ('sk-0123456789ab', '••••89ab')])
+def test_mask_api_key_keeps_at_most_the_last_four_characters(key, masked):
+    assert mask_api_key(key) == masked
 
 
 @pytest.mark.parametrize('key', [None, 123, '', '  ', 'bad\nkey', 'x' * 513])

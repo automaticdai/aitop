@@ -20,6 +20,7 @@ from aitop.web import (
     WebServer,
     build_app,
     is_wsl,
+    mask_api_key,
     resolve_host,
     snapshot_to_dict,
 )
@@ -305,6 +306,7 @@ def test_favicon_is_served_and_linked_from_dashboard():
 
 def _account_settings():
     return {**{name + "_api_key_configured": bool(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
+            **{name + "_api_key_masked": mask_api_key(provider_api_key(name, None)) for name in API_KEY_PROVIDERS},
             **{name + "_region": "global" for name in REGIONAL_PROVIDERS}}
 
 

@@ -36,6 +36,17 @@ _SETTINGS_FIELDS = (
 )
 
 
+def mask_api_key(key: str | None) -> str:
+    """A recognisable stand-in for a stored key, safe to send to the browser.
+
+    Only the last four characters survive, so the settings form can show which
+    key is saved without the secret itself ever leaving the process.
+    """
+    if not key:
+        return ""
+    return "•" * 4 + key[-4:] if len(key) > 8 else "•" * len(key)
+
+
 def is_wsl() -> bool:
     """True under WSL2 (the kernel release carries "microsoft" / "WSL")."""
     release = platform.release().lower()
@@ -174,6 +185,8 @@ def build_app(
                 "provider_order": ordered_names(),
                 "enabled_providers": [name for name in PROVIDER_NAMES if name in ordered_names()],
                 **{name + "_api_key_configured": bool(provider_api_key(name, config.providers.get(name)))
+                   for name in API_KEY_PROVIDERS},
+                **{name + "_api_key_masked": mask_api_key(provider_api_key(name, config.providers.get(name)))
                    for name in API_KEY_PROVIDERS},
                 **{name + "_region": config.providers[name].region if name in config.providers else "global" for name in REGIONAL_PROVIDERS}}
 
@@ -570,9 +583,8 @@ INDEX_HTML = """<!doctype html>
               <div class="api-key-row">
                 <label for="glm-api-key">API key</label>
                 <input id="glm-api-key" type="password" autocomplete="new-password" spellcheck="false"
-                       maxlength="512" placeholder="Set or replace key" aria-describedby="glm-key-hint">
+                       maxlength="512" placeholder="Set key">
               </div>
-              <p class="muted" id="glm-key-hint"><span id="glm-key-status"></span> Leave blank to keep.</p>
             </div>
           </div>
           <div class="provider-setting">
@@ -585,9 +597,8 @@ INDEX_HTML = """<!doctype html>
               <div class="api-key-row">
                 <label for="kimi-api-key">API key</label>
                 <input id="kimi-api-key" type="password" autocomplete="new-password" spellcheck="false"
-                       maxlength="512" placeholder="Set or replace key" aria-describedby="kimi-key-hint">
+                       maxlength="512" placeholder="Set key">
               </div>
-              <p class="muted" id="kimi-key-hint"><span id="kimi-key-status"></span> Leave blank to keep.</p>
             </div>
           </div>
           <div class="provider-setting">
@@ -600,9 +611,8 @@ INDEX_HTML = """<!doctype html>
               <div class="api-key-row">
                 <label for="minimax-api-key">API key</label>
                 <input id="minimax-api-key" type="password" autocomplete="new-password" spellcheck="false"
-                       maxlength="512" placeholder="Set or replace key" aria-describedby="minimax-key-hint">
+                       maxlength="512" placeholder="Set key">
               </div>
-              <p class="muted" id="minimax-key-hint"><span id="minimax-key-status"></span> Leave blank to keep.</p>
             </div>
           </div>
           <div class="provider-setting">
@@ -611,9 +621,8 @@ INDEX_HTML = """<!doctype html>
               <div class="api-key-row">
                 <label for="openrouter-api-key">API key</label>
                 <input id="openrouter-api-key" type="password" autocomplete="new-password" spellcheck="false"
-                       maxlength="512" placeholder="Set or replace key" aria-describedby="openrouter-key-hint">
+                       maxlength="512" placeholder="Set key">
               </div>
-              <p class="muted" id="openrouter-key-hint"><span id="openrouter-key-status"></span> Leave blank to keep.</p>
             </div>
           </div>
           <div class="provider-setting">
@@ -622,9 +631,8 @@ INDEX_HTML = """<!doctype html>
               <div class="api-key-row">
                 <label for="deepseek-api-key">API key</label>
                 <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
-                       maxlength="512" placeholder="Set or replace key" aria-describedby="deepseek-key-hint">
+                       maxlength="512" placeholder="Set key">
               </div>
-              <p class="muted" id="deepseek-key-hint"><span id="deepseek-key-status"></span> Leave blank to keep.</p>
             </div>
           </div>
         </div>
@@ -682,15 +690,16 @@ INDEX_HTML = """<!doctype html>
     const keyedProviders = ['deepseek', 'glm', 'openrouter', 'kimi', 'minimax'];
     const regionalProviders = ['glm', 'kimi', 'minimax'];
     let savedAccountSettings = CONFIG.settings;
-    function keyStatus() {
+    function keyPlaceholders() {
       keyedProviders.forEach(name => {
-        document.getElementById(name + '-key-status').textContent = savedAccountSettings[name + '_api_key_configured'] ? 'Key configured.' : 'No key set.';
+        const masked = savedAccountSettings[name + '_api_key_masked'];
+        document.getElementById(name + '-api-key').placeholder = masked || 'Set key';
       });
     }
     function restoreAccountSettings() {
       keyedProviders.forEach(name => { document.getElementById(name + '-api-key').value = ''; });
       regionalProviders.forEach(name => { document.getElementById(name + '-region').value = savedAccountSettings[name + '_region'] || 'global'; });
-      keyStatus();
+      keyPlaceholders();
     }
     const providerSwitches = document.getElementById("provider-switches");
     let savedEnabled = CONFIG.settings.enabled_providers;
@@ -868,7 +877,7 @@ INDEX_HTML = """<!doctype html>
         savedEnabled = data.enabled_providers;
         savedAccountSettings = data;
         if (fromMenu) {
-          keyStatus();
+          keyPlaceholders();
           if (revision === menuRevision) {
             menuDirty = false;
             saveStatus.textContent = "Saved";
