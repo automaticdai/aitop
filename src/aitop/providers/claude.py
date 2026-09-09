@@ -75,8 +75,8 @@ _ROWS = 100
 
 # "Current session" -> daily: a short rolling window (resets same day, ~hours
 # out -- the "Resets 11pm" style seen in the real capture), the same "5h"/
-# rolling-window bucket concept Codex's _DAILY_RE and Gemini's _DAILY_RE
-# matched. "Current week (all models)" -> weekly: explicitly scoped to "(all
+# rolling-window bucket concept Gemini's _DAILY_RE matches.
+# "Current week (all models)" -> weekly: explicitly scoped to "(all
 # models)" rather than a bare "Current week" match, so a possible per-model
 # variant (e.g. a Max-plan "Current week (Opus)" row, not present on this
 # Pro-plan account and never observed here) can't be mismatched into this

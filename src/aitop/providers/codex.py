@@ -30,20 +30,10 @@ _SEQ = [(4.5, "/status\r"), (9.0, "/quit\r")]
 # reaps the helper process and its PTY child.
 _TOTAL_TIMEOUT = 11.0
 
-# "<label> limit:" rows only appear for windows the account actually has
-# (see tests/fixtures/codex_usage.txt, captured live: this account only has
-# a "Weekly limit" row, no "5h"/"Daily" row). Match generically so either
-# label is picked up when present, and treat a missing label as no data
-# for that window rather than fabricating a value. The reset time (when
-# present) trails the percentage in parens, e.g. "100% left (resets 14:11
-# on 27 Aug)" -- captured verbatim, no timezone/date parsing.
+# Only the weekly limit is displayed for Codex. A missing weekly row means
+# no quota data; other windows must not be substituted for it. Reset text
+# is captured verbatim, without timezone/date parsing.
 _WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
-_DAILY_RE = re.compile(r"(?:5h|Daily) limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
-# Newer codex-cli plans (v0.152.0 on "Go", see
-# tests/fixtures/codex_usage_monthly.txt) report neither of the rows above,
-# only a single monthly pool -- so a build that knows just 5h/weekly parses
-# nothing at all and the card reads "no data".
-_MONTHLY_RE = re.compile(r"Monthly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 # The header box of both the welcome screen and the /status panel carries the
 # CLI version verbatim ("OpenAI Codex (v0.148.0)") -- the single-line client
 # info for the card.
@@ -59,11 +49,7 @@ class CodexProvider:
                 ["codex"],
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_patterns=[
-                    _DAILY_RE.pattern,
-                    _WEEKLY_RE.pattern,
-                    _MONTHLY_RE.pattern,
-                ],
+                done_patterns=[_WEEKLY_RE.pattern],
                 dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
@@ -72,16 +58,12 @@ class CodexProvider:
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
-        daily = _quota_from_pct_left(text, _DAILY_RE)
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
-        monthly = _quota_from_pct_left(text, _MONTHLY_RE)
         version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "codex",
             ok=True,
-            daily=daily,
             weekly=weekly,
-            monthly=monthly,
             client_info=version.group(0) if version else None,
             raw={"screen": text},
         )

@@ -27,16 +27,10 @@ def test_parse_real_status_screen():
     assert snap.raw == {"screen": FIXTURE}
 
 
-def test_parse_real_monthly_status_screen():
-    # tests/fixtures/codex_usage_monthly.txt is a real `codex /status` PTY
-    # capture (v0.152.0). Newer codex-cli plans report a single "Monthly
-    # limit:" row instead of the 5h/Weekly pair, so a build that only knows
-    # those two windows parses nothing at all and the card reads "no data".
+def test_parse_monthly_only_screen_does_not_substitute_for_weekly():
     snap = CodexProvider.parse(FIXTURE_MONTHLY)
     assert snap.ok is True
-    assert snap.monthly == Quota(
-        used=5.0, limit=100.0, unit="%", reset_note="resets 02:42 on 2 Oct"
-    )
+    assert snap.monthly is None
     assert snap.daily is None
     assert snap.weekly is None
     assert snap.client_info == "OpenAI Codex (v0.152.0)"
@@ -67,13 +61,16 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.monthly is None
 
 
-def test_parse_daily_and_weekly_present():
+def test_parse_keeps_only_weekly_when_other_windows_are_present():
     text = (
         "  5h limit:      [██████████░░░░░░░░░░] 55% left (resets soon)\n"
+        "  Daily limit:   [██████████░░░░░░░░░░] 60% left (resets today)\n"
         "  Weekly limit:   [████████████████░░░░] 80% left (resets later)\n"
+        "  Monthly limit:   [████████████████░░░░] 90% left (resets next month)\n"
     )
     snap = CodexProvider.parse(text)
-    assert snap.daily == Quota(used=45.0, limit=100.0, unit="%", reset_note="resets soon")
+    assert snap.daily is None
+    assert snap.monthly is None
     assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%", reset_note="resets later")
 
 
@@ -107,13 +104,9 @@ def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch
     assert len(calls) == 1
     assert calls[0][1]["dialog_responses"] == _DIALOG_RESPONSES
     assert calls[0][1]["done_patterns"]
-    # Every window this parser understands has to be a done-pattern: a
-    # missing one means the capture never returns early and every poll burns
-    # the full _TOTAL_TIMEOUT waiting for a row that already arrived.
+    # Other rows must not end capture before the weekly quota arrives.
     assert set(calls[0][1]["done_patterns"]) == {
-        codex_module._DAILY_RE.pattern,
         codex_module._WEEKLY_RE.pattern,
-        codex_module._MONTHLY_RE.pattern,
     }
 
 

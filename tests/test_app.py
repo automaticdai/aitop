@@ -228,11 +228,14 @@ def test_mock_mode_with_an_unrecognized_provider_name_does_not_crash_the_app():
             for _ in range(100):
                 await asyncio.sleep(0.02)
                 await pilot.pause()
-                if "12/50" in str(row.content):
+                if "85.0% left" in str(row.content):
                     break
             assert app.is_running
             # the real provider still rendered normally
-            assert "38/50 messages left (76.0%)" in str(row.content)
+            assert "85.0% left" in str(row.content)
+            assert "weekly" in str(row.content)
+            assert "session" not in str(row.content)
+            assert "monthly" not in str(row.content)
             # ...and the unknown one simply has no row to update
             assert app.query("#row-nonsense").__len__() == 0
 

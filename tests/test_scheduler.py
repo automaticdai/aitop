@@ -32,8 +32,8 @@ def test_mock_provider():
     snap = asyncio.run(MockProvider("codex").fetch())
     assert snap.provider == "codex"
     assert snap.ok is True
-    assert snap.daily is not None and snap.weekly is not None
-    assert isinstance(snap.daily, Quota)
+    assert snap.daily is None and snap.monthly is None
+    assert isinstance(snap.weekly, Quota)
 
 
 def test_poller_captures_results_and_errors():

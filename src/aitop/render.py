@@ -255,10 +255,9 @@ def daily_label(provider: str) -> str:
 
     Claude Code's "daily" is actually its "Current session" -- a rolling
     session window that resets mid-session, not a calendar day -- so it reads
-    "session" there. Codex's is its own CLI's "5h limit:" row (see
-    providers/codex.py's _DAILY_RE) -- also a rolling window rather than a
-    calendar day, and its length isn't always 5 hours across plans -- so it
-    reads "session" too. GLM uses a rolling Coding Plan session window.
+    "session" there. Legacy Codex snapshots may contain a rolling "5h"
+    window, which also reads "session". GLM uses a rolling Coding Plan
+    session window.
     MiniMax's Token Plan enforces a rolling 5-hour interval alongside its
     weekly window, so that one reads "session" too. Other providers keep the
     plain "daily".
