@@ -15,12 +15,17 @@ import tomlkit
 # (where "current working directory" no longer means "the project folder").
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
-PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax")
+PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax",
+                  "openai", "anthropic")
 
-API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter", "kimi", "minimax")
+API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter", "kimi", "minimax", "openai", "anthropic")
+# Providers whose credential has to be an *admin* key: the vendor cost APIs
+# they poll reject an ordinary inference key, so the environment fallbacks
+# read the admin-specific name first (see provider_api_key).
+ADMIN_KEY_PROVIDERS = ("openai", "anthropic")
 # Providers that need credentials or a paid plan aitop can't assume: off
 # unless the user turns them on, so a fresh install shows no broken cards.
-_OPT_IN = ("copilot", "glm", "openrouter", "kimi", "minimax")
+_OPT_IN = ("copilot", "glm", "openrouter", "kimi", "minimax", "openai", "anthropic")
 REGIONAL_PROVIDERS = ("glm", "kimi", "minimax")
 
 
@@ -28,6 +33,12 @@ def provider_api_key(name: str, pc: "ProviderConfig | None") -> str | None:
     if pc and pc.api_key:
         return pc.api_key
     names = [name.upper() + "_API_KEY"]
+    if name in ADMIN_KEY_PROVIDERS:
+        # ANTHROPIC_API_KEY / OPENAI_API_KEY are, in most shells, an ordinary
+        # inference key -- which these cost endpoints answer with a 401. Read
+        # the admin-specific name first, so a correct key in the environment
+        # wins over a plausible-looking wrong one already exported there.
+        names.insert(0, name.upper() + "_ADMIN_KEY")
     if name == "glm":
         names.append("ZHIPU_API_KEY" if pc and pc.region == "china" else "ZAI_API_KEY")
     if name == "kimi":
@@ -270,7 +281,10 @@ def default_config_toml() -> str:
     for name in PROVIDER_NAMES:
         lines.append(f"[providers.{name}]")
         lines.append(f"enabled = {str(cfg.providers[name].enabled).lower()}")
-        if name in API_KEY_PROVIDERS:
+        if name in ADMIN_KEY_PROVIDERS:
+            lines.append("# Needs an admin key (or a usage-scoped one): set api_key through")
+            lines.append(f"# the web Menu, or use {name.upper()}_ADMIN_KEY. A plain API key is refused.")
+        elif name in API_KEY_PROVIDERS:
             lines.append(f"# Set api_key through the web Menu, or use {name.upper()}_API_KEY.")
         if name in REGIONAL_PROVIDERS:
             lines.append('region = "global" # "global" or "china"')

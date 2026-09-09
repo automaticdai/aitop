@@ -3,13 +3,16 @@ from pathlib import Path
 import pytest
 import tomllib
 
-from aitop.config import Config, ConfigError, default_config_toml, layout_cells, load_config, place_providers
+from aitop.config import (
+    Config, ConfigError, PROVIDER_NAMES, default_config_toml, layout_cells, load_config,
+    place_providers,
+)
 
 
 def test_defaults():
     cfg = Config.defaults()
     assert cfg.refresh_interval_s == 30.0
-    assert set(cfg.providers) == {"claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax"}
+    assert set(cfg.providers) == set(PROVIDER_NAMES)
     assert all(pc.position is None and pc.timeout_s == 15.0 for pc in cfg.providers.values())
 
 
@@ -37,7 +40,7 @@ def test_default_config_toml_is_valid_and_matches_defaults():
     data = tomllib.loads(default_config_toml())
     assert data["refresh_interval_s"] == 30
     assert data["layout"] == {"adaptive": False, "rows": 4, "columns": 1}
-    assert set(data["providers"]) == {"claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax"}
+    assert set(data["providers"]) == set(PROVIDER_NAMES)
     assert data["providers"]["claude"]["position"] == [1, 1]
     assert data["providers"]["deepseek"]["position"] == [4, 1]
 

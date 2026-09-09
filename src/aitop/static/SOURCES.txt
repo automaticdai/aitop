@@ -17,3 +17,9 @@ Downloaded 2026-09-06 from the same MIT-licensed collection. Kimi uses the
 monochrome mark because the colored one draws its glyph in white, which
 disappears on the light theme; MiniMax's colored mark is a gradient that
 reads on both.
+
+openai.svg: packages/static-svg/icons/openai.svg
+anthropic.svg: packages/static-svg/icons/anthropic.svg
+Downloaded 2026-09-09 from the same MIT-licensed collection. Both are the
+monochrome marks -- OpenAI publishes no colored one, and the Anthropic mark
+keeps the platform card distinct from the Claude Code card's colored logo.

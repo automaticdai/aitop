@@ -1,5 +1,6 @@
 import re
 
+from aitop.config import PROVIDER_NAMES
 from aitop.models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 from aitop.render import (
     DISPLAY_NAME,
@@ -49,11 +50,16 @@ def test_display_name_maps_internal_keys_to_shown_text():
         "openrouter": "OpenRouter",
         "kimi": "Kimi",
         "minimax": "MiniMax",
+        "openai": "OpenAI Platform",
+        "anthropic": "Claude Platform",
     }
+    # Two companies own two cards each, so the shown text is what tells them
+    # apart: the CLI card names the tool, the API card names the platform.
+    assert set(DISPLAY_NAME) == set(PROVIDER_NAMES)
 
 
 def test_logos_cover_every_known_provider():
-    assert set(LOGOS) == {"claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax"}
+    assert set(LOGOS) == set(PROVIDER_NAMES)
 
 
 def test_render_snapshot_prepends_the_provider_logo():

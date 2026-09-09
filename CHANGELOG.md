@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4 — 2026-09-09
+
+- Add **OpenAI Platform** and **Claude Platform** cards, showing what an organization has been charged today, this week, and this month from each vendor's cost API. Both are opt-in and need an *organization admin* key — an ordinary inference key is refused — so `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` are read before the plain `*_API_KEY` names. Neither platform publishes a readable balance, so these cards show spend alone.
+- Reorder providers in the **Providers** tab by dragging a row by its grip, with arrow keys on a focused grip for the keyboard. The separate **Provider order** list is gone from **Layouts**; the order it saved is unchanged.
+
+Upgrade the package, restart aitop, and reload the browser. Enable OpenAI Platform or Claude Platform under **Menu → Providers** and enter an organization admin key.
+
 ## v1.3 — 2026-09-07
 
 - Show the saved API key as a masked preview in each provider's field, replacing the "Key configured. Leave blank to keep." note. Only the last four characters reach the browser; the key itself never leaves the process, and leaving the field blank still keeps it.

@@ -1,6 +1,6 @@
 # aitop
 
-Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, and MiniMax** from your terminal or browser. See remaining quota, reset countdowns, and account balances in one place.
+Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, MiniMax, OpenAI Platform, and Claude Platform** from your terminal or browser. See remaining quota, reset countdowns, account balances, and API spend in one place.
 
 See the [v1.2.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
@@ -47,7 +47,7 @@ Open **http://localhost:8787**. The web server is off by default.
 
 *Web dashboard with demo data.*
 
-- **Menu:** turn providers on/off, set provider API keys and regions, choose a grid, and reorder cards. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
+- **Menu:** turn providers on/off, set provider API keys and regions, and choose a grid. Reorder cards by dragging a provider row by its grip under **Providers** (arrow keys work on a focused grip), or by dragging a card on the dashboard. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
 - **Drag cards** to reorder and save immediately. Grips support touch and arrow keys.
 - **Automatic saving** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Changes save as you make them; closing the Menu finishes pending saves. If saving fails, the Menu shows an error and a Retry button.
 
@@ -70,8 +70,10 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | OpenRouter | API key in **Menu**, or `OPENROUTER_API_KEY` | HTTPS key and credits API |
 | Kimi | API key in **Menu**, or `KIMI_API_KEY` / `MOONSHOT_API_KEY`; choose a region | HTTPS balance API |
 | MiniMax | API key in **Menu**, or `MINIMAX_API_KEY`; choose a region | HTTPS Token Plan quota API |
+| OpenAI Platform | **Admin** or `api.usage.read`-scoped key in **Menu**, or `OPENAI_ADMIN_KEY` | HTTPS Costs API |
+| Claude Platform | **Admin** or organization-scoped key in **Menu**, or `ANTHROPIC_ADMIN_KEY` | HTTPS cost report API |
 
-Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek, OpenRouter, and Kimi show an account balance rather than a quota bar.
+Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek, OpenRouter, and Kimi show an account balance rather than a quota bar; OpenAI Platform and Claude Platform show spend alone.
 
 Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
 
@@ -84,6 +86,12 @@ Where the balance comes from depends on the key. A key with a spending limit rep
 Enable **Kimi** under **Menu → Providers**, select the region matching your account, and enter its API key. Kimi is off by default. The card shows the pay-as-you-go balance from Moonshot's [balance endpoint](https://platform.kimi.ai/docs/api/balance). At or below zero the vendor rejects every call, so the card marks the balance as insufficient. Keys are issued per platform and are not interchangeable: a global key sent to the China host returns 401, which is why a failure names the region as well as the key. A **Kimi Code** subscription is a different product with its own request quotas and no published API; this adapter does not read it.
 
 Enable **MiniMax** under **Menu → Providers**, select the region, and enter a Token Plan key. MiniMax is off by default. The card shows the Token Plan's rolling 5-hour session window and its weekly window as request quotas. MiniMax does not publish a quota endpoint, so this adapter reads the same `token_plan/remains` route the community tooling uses; it is **not vendor-documented and may change or be withdrawn**. The route and its `base_resp` envelope have been confirmed against a live account, but the shape of a populated quota response has not: an account without a subscription answers `2062`, which the card reports as no active Token Plan rather than as an error. A key aimed at the other region answers `2049`, reported as a key or region problem. This integration only reads usage; it does not make model requests.
+
+Enable **OpenAI Platform** and **Claude Platform** under **Menu → Providers** and enter an organization admin key; both are off by default. Each card shows what the organization has been charged today, this week, and this month, read from OpenAI's [Costs API](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs) and Anthropic's [cost report](https://platform.claude.com/docs/en/manage-claude/usage-cost-api). Neither platform publishes a readable account balance, so these cards carry no balance and no bars — spend windows have no vendor-set cap to draw one from.
+
+Both endpoints belong to their vendor's admin API and refuse an ordinary inference key. An organization admin key always works (`sk-admin-…` for OpenAI, `sk-ant-admin01-…` for Anthropic), and each vendor also accepts a narrower credential: OpenAI takes any restricted key carrying the `api.usage.read` scope, and Anthropic any key scoped to the organization rather than a single workspace. A plain OpenAI project key (`sk-proj-…`) answers 403 and a standard Anthropic key (`sk-ant-api03-…`) answers 401. Anthropic's admin API is also unavailable to individual accounts that have not set up an organization. That is also why `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` are read *before* `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`: the plain names are usually already exported with an inference key. Windows are UTC calendar windows — today, from Monday, and from the 1st — because both APIs bucket their days in UTC. These integrations only read cost data; they do not make model requests.
+
+Note the pairing: **Codex** and **Claude Code** are the CLI subscription cards, while **OpenAI Platform** and **Claude Platform** are the pay-as-you-go API cards for the same two companies. A subscription's usage does not appear on the platform card, and API spend does not appear on the CLI card.
 
 GLM also accepts `ZAI_API_KEY` for the Global region or `ZHIPU_API_KEY` for China, after `GLM_API_KEY`. Saved keys take precedence. When running aitop as a service, set environment keys in that service's environment, or use the Menu. API key fields stay blank after saving and are disabled when their provider is off.
 

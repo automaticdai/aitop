@@ -56,6 +56,17 @@ enabled = false
 region = "global"    # "global" = www.minimax.io, "china" = www.minimaxi.com
 # api_key can be set in Menu; MINIMAX_API_KEY is the fallback.
 
+[providers.openai]
+enabled = false
+# Needs an admin key, or one scoped `api.usage.read`. Set it in Menu;
+# OPENAI_ADMIN_KEY is the fallback, then OPENAI_API_KEY. A project key is refused.
+
+[providers.anthropic]
+enabled = false
+# Needs an admin key, or one scoped to the organization. Set it in Menu;
+# ANTHROPIC_ADMIN_KEY is the fallback, then ANTHROPIC_API_KEY. A standard or
+# workspace key is refused.
+
 [web]
 enabled = false
 host = "127.0.0.1"
@@ -78,9 +89,9 @@ columns = 2
   - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every enabled built-in provider is shown in the standard order; all `position` values, including `[-1, -1]`, are ignored.
   - `rows` — number of rows. Defaults to `4`.
   - `columns` — number of columns. Defaults to `1`.
-- `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`, `copilot`, `glm`, `openrouter`, `kimi`, `minimax`). Any provider omitted from the file keeps its defaults.
-  - `enabled` — whether to display and poll this provider. Defaults to `true` for the original four providers; Copilot, GLM, OpenRouter, Kimi, and MiniMax are off when omitted. An explicit provider table without `enabled` enables that provider. `false` takes precedence over adaptive layout and positions. Menu switches apply immediately to the running poller and TUI. Turning a provider on restores a valid position and expands a fixed grid when necessary.
-  - `api_key` — DeepSeek, GLM, OpenRouter, Kimi, and MiniMax. A key saved through the Menu takes precedence over the corresponding `DEEPSEEK_API_KEY`, `GLM_API_KEY`, `OPENROUTER_API_KEY`, `KIMI_API_KEY`, or `MINIMAX_API_KEY`. Saving a key sets config permissions to `600`; API responses expose only whether a key is configured. Leave the Menu field blank to retain it; remove this config key manually to return to the environment variable.
+- `[providers.<name>]` — one optional table per provider (`claude`, `codex`, `gemini`, `deepseek`, `copilot`, `glm`, `openrouter`, `kimi`, `minimax`, `openai`, `anthropic`). Any provider omitted from the file keeps its defaults. `openai` is the OpenAI Platform cost report and `anthropic` the Claude Platform one; `codex` and `claude` remain the CLI cards for the same two companies.
+  - `enabled` — whether to display and poll this provider. Defaults to `true` for the original four providers; Copilot, GLM, OpenRouter, Kimi, MiniMax, OpenAI Platform, and Claude Platform are off when omitted. An explicit provider table without `enabled` enables that provider. `false` takes precedence over adaptive layout and positions. Menu switches apply immediately to the running poller and TUI. Turning a provider on restores a valid position and expands a fixed grid when necessary.
+  - `api_key` — DeepSeek, GLM, OpenRouter, Kimi, MiniMax, OpenAI Platform, and Claude Platform. A key saved through the Menu takes precedence over the corresponding `DEEPSEEK_API_KEY`, `GLM_API_KEY`, `OPENROUTER_API_KEY`, `KIMI_API_KEY`, or `MINIMAX_API_KEY`. OpenAI Platform and Claude Platform read `OPENAI_ADMIN_KEY` / `ANTHROPIC_ADMIN_KEY` first and `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` only after: their endpoints need an admin key (or, respectively, an `api.usage.read`-scoped or organization-scoped key), and the plain names usually hold an ordinary inference key that would be refused. Saving a key sets config permissions to `600`; API responses expose only whether a key is configured. Leave the Menu field blank to retain it; remove this config key manually to return to the environment variable.
   - `region` — GLM, Kimi, and MiniMax: `"global"` (default) or `"china"`. GLM selects `api.z.ai` or `open.bigmodel.cn`; Kimi selects `api.moonshot.ai` or `api.moonshot.cn` and its balance currency (USD or CNY); MiniMax selects `www.minimax.io` or `www.minimaxi.com`. Kimi and MiniMax keys are issued per platform and return 401 against the other region. GLM also falls back to `ZAI_API_KEY` for global accounts or `ZHIPU_API_KEY` for China accounts. Region controls save automatically in the Menu and are disabled while the provider is off.
   - Copilot authentication uses `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`, or falls back to `gh auth token --hostname github.com`. For a background service, authenticate `gh` as the service user or put the environment token in the service environment. The Copilot CLI is not required. No GitHub token is exposed through the dashboard or stored in aitop's config.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order. Defaults to unset (auto-fill).
@@ -92,7 +103,7 @@ columns = 2
   - `show_claude_gpt` — show the Claude & GPT-OSS quota group inside Antigravity. Defaults to `true`.
   - `show_remaining` — optional web override of the top-level setting; omitted values inherit it. Edit the config and restart to apply. Unknown limits show “Remaining unknown”.
   - `reset_countdown` — optional web override of the top-level reset format. The original vendor note is available by hovering over the countdown.
-  - `provider_order` — preferred card order, saved by dragging or the Menu. Defaults to `[]`, which follows the base provider order. Disabled providers stay hidden, and enabled providers missing from this list are appended.
+  - `provider_order` — preferred card order, saved by dragging a card on the dashboard or a provider row under **Menu → Providers**. Defaults to `[]`, which follows the base provider order. Disabled providers stay hidden, and enabled providers missing from this list are appended.
 - `[web.layout]` — shared web display preferences, saved by the settings menu.
   - `mode` — `"adaptive"` fits the browser width and `"custom"` uses the dimensions below. Defaults to `"adaptive"`.
   - `rows`, `columns` — custom grid dimensions, each from `1` to `8`, defaulting to `2`. The settings menu requires enough cells for all enabled providers.

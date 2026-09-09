@@ -44,6 +44,8 @@ DISPLAY_NAME = {
     "openrouter": "OpenRouter",
     "kimi": "Kimi",
     "minimax": "MiniMax",
+    "openai": "OpenAI Platform",
+    "anthropic": "Claude Platform",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -104,6 +106,11 @@ LOGOS = {
     "openrouter": f"[#6467F2]{_text_art('OPENROUTER')}[/]",  # OpenRouter indigo
     "kimi": f"[#1783FF]{_text_art('KIMI')}[/]",  # Moonshot blue
     "minimax": f"[#E2167E]{_text_art('MINIMAX')}[/]",  # MiniMax magenta
+    # The two platform cards name the same two companies as the Codex and
+    # Claude Code cards; the card's own border title is what separates
+    # "OpenAI Platform" from "Codex" and "Claude Platform" from "Claude Code".
+    "openai": f"[#10A37F]{_text_art('OPENAI')}[/]",
+    "anthropic": f"[#D97757]{_text_art('ANTHROPIC')}[/]",
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -121,6 +128,8 @@ LOGO_WIDTH = {
     "openrouter": 5 * len("OPENROUTER") - 1,
     "kimi": 5 * len("KIMI") - 1,
     "minimax": 5 * len("MINIMAX") - 1,
+    "openai": 5 * len("OPENAI") - 1,
+    "anthropic": 5 * len("ANTHROPIC") - 1,
 }
 
 

@@ -397,7 +397,8 @@ INDEX_HTML = """<!doctype html>
   .drag-handle:active { cursor: grabbing; }
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
-  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter, .provider-logo.kimi { filter: invert(1); } }
+  @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter, .provider-logo.kimi,
+    .provider-logo.openai, .provider-logo.anthropic { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -464,8 +465,6 @@ INDEX_HTML = """<!doctype html>
               background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .menu-tab[aria-selected="true"] { background: var(--card); color: var(--text); box-shadow: 0 1px 4px #00000014; }
   .menu-section { margin-top: 0; }
-  .order-section { margin-top: 24px; }
-  .order-section h3 { margin: 0; font-size: 13px; }
   .settings .menu-section p { margin: 4px 0 12px; font-size: 12px; }
   .settings .provider-options { margin: 0 0 4px 12px; padding-left: 12px; border-left: 2px solid var(--border); }
   .settings .provider-options:has(:disabled) { opacity: .55; }
@@ -486,14 +485,16 @@ INDEX_HTML = """<!doctype html>
   .settings .api-key-row + .api-key-row { margin-top: 6px; }
   .settings .api-key-row input, .settings .api-key-row select { padding: 7px 9px; font-size: 12px; }
   .settings .provider-options p { margin: 5px 0 0; font-size: 11px; }
-  .provider-order { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
-  .provider-order li { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
-                       background: var(--bg); border-radius: 8px; }
-  .provider-order .provider-logo { width: 22px; height: 22px; }
-  .order-name { flex: 1; min-width: 0; font-size: 12px; }
-  .order-button { border: 1px solid var(--border); background: var(--card); color: var(--text);
-                  border-radius: 6px; width: 30px; height: 30px; padding: 0; }
-  .order-button:disabled { cursor: default; opacity: .3; }
+  /* The provider rows *are* the order list, so each one is a drop target and
+     each grip is a drag source. Only the grip drags -- putting `draggable` on
+     the whole row would make selecting text in an API-key field start a
+     reorder. Disabled providers hold no place in the order, so their grip is
+     inert and they sit below the rest. */
+  .provider-setting.dragging { opacity: .45; }
+  .provider-setting.drop-target { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 8px; }
+  #provider-switches .drag-handle { padding: 4px 2px; margin-right: 2px; }
+  #provider-switches .drag-handle svg { pointer-events: none; }
+  #provider-switches .drag-handle:disabled { cursor: default; opacity: .25; background: transparent; }
   .settings .save-status { margin: 16px 0 0; font-size: 12px; }
   #retry-settings { margin-top: 8px; }
   .settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -548,7 +549,7 @@ INDEX_HTML = """<!doctype html>
     </div>
   </header>
   <main id="cards"><p class="empty">loading…</p></main>
-  <p class="muted" id="reorder-hint">Drag a card to reorder, or use Provider order in the Menu.</p>
+  <p class="muted" id="reorder-hint">Drag a card to reorder, or drag a provider in the Menu.</p>
   <p class="muted" id="layout-status" role="status"></p>
   </div>
   <dialog class="settings" id="settings" aria-labelledby="settings-title" aria-describedby="settings-description">
@@ -565,18 +566,18 @@ INDEX_HTML = """<!doctype html>
                 aria-selected="false" aria-controls="menu-panel-layouts">Layouts</button>
       </div>
       <section class="menu-section" id="menu-panel-providers" role="tabpanel" aria-labelledby="menu-tab-providers">
-        <p class="muted">Disabled providers are not polled.</p>
+        <p class="muted">Drag a provider by its grip to reorder the cards. Disabled providers are not polled.</p>
         <div id="provider-switches">
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="claude">
             <div id="provider-toggle-claude"></div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="codex">
             <div id="provider-toggle-codex"></div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="copilot">
             <div id="provider-toggle-copilot"></div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="gemini">
             <div id="provider-toggle-gemini"></div>
             <div class="provider-options" id="gemini-options" hidden>
               <div class="toggle-setting">
@@ -586,7 +587,7 @@ INDEX_HTML = """<!doctype html>
               </div>
             </div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="glm">
             <div id="provider-toggle-glm"></div>
             <div class="provider-options" id="glm-options" hidden>
               <div class="api-key-row pair">
@@ -598,7 +599,7 @@ INDEX_HTML = """<!doctype html>
               </div>
             </div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="kimi">
             <div id="provider-toggle-kimi"></div>
             <div class="provider-options" id="kimi-options" hidden>
               <div class="api-key-row pair">
@@ -610,7 +611,7 @@ INDEX_HTML = """<!doctype html>
               </div>
             </div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="minimax">
             <div id="provider-toggle-minimax"></div>
             <div class="provider-options" id="minimax-options" hidden>
               <div class="api-key-row pair">
@@ -622,7 +623,7 @@ INDEX_HTML = """<!doctype html>
               </div>
             </div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="openrouter">
             <div id="provider-toggle-openrouter"></div>
             <div class="provider-options" id="openrouter-options" hidden>
               <div class="api-key-row">
@@ -632,7 +633,7 @@ INDEX_HTML = """<!doctype html>
               </div>
             </div>
           </div>
-          <div class="provider-setting">
+          <div class="provider-setting" data-provider="deepseek">
             <div id="provider-toggle-deepseek"></div>
             <div class="provider-options" id="deepseek-options" hidden>
               <div class="api-key-row">
@@ -640,6 +641,28 @@ INDEX_HTML = """<!doctype html>
                 <input id="deepseek-api-key" type="password" autocomplete="new-password" spellcheck="false"
                        maxlength="512" placeholder="Set key">
               </div>
+            </div>
+          </div>
+          <div class="provider-setting" data-provider="openai">
+            <div id="provider-toggle-openai"></div>
+            <div class="provider-options" id="openai-options" hidden>
+              <div class="api-key-row">
+                <label for="openai-api-key">Admin key</label>
+                <input id="openai-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set key">
+              </div>
+              <p class="muted hint">Needs an admin key (sk-admin-…) or a key with the api.usage.read scope. A plain project key is refused.</p>
+            </div>
+          </div>
+          <div class="provider-setting" data-provider="anthropic">
+            <div id="provider-toggle-anthropic"></div>
+            <div class="provider-options" id="anthropic-options" hidden>
+              <div class="api-key-row">
+                <label for="anthropic-api-key">Admin key</label>
+                <input id="anthropic-api-key" type="password" autocomplete="new-password" spellcheck="false"
+                       maxlength="512" placeholder="Set key">
+              </div>
+              <p class="muted hint">Needs an admin key (sk-ant-admin01-…) or an organization-scoped key. A standard or workspace key is refused.</p>
             </div>
           </div>
         </div>
@@ -662,10 +685,6 @@ INDEX_HTML = """<!doctype html>
         </div>
       </div>
       <p class="muted hint" id="layout-hint"></p>
-      <div class="order-section" role="group" aria-labelledby="order-title">
-        <h3 id="order-title">Provider order</h3>
-        <ol class="provider-order" id="provider-order"></ol>
-      </div>
       </section>
       <p class="validation" id="layout-error" role="alert" hidden></p>
       <p class="muted save-status" id="settings-save-status" role="status" hidden></p>
@@ -687,13 +706,12 @@ INDEX_HTML = """<!doctype html>
     const columnsInput = document.getElementById("grid-columns");
     const groupInput = document.getElementById("show-claude-gpt");
     const settingsFields = document.getElementById("settings-fields");
-    const orderList = document.getElementById("provider-order");
     const layoutStatus = document.getElementById("layout-status");
     const layoutError = document.getElementById("layout-error");
     const saveStatus = document.getElementById("settings-save-status");
     const apiKeyInput = document.getElementById("deepseek-api-key");
     const retrySettings = document.getElementById("retry-settings");
-    const keyedProviders = ['deepseek', 'glm', 'openrouter', 'kimi', 'minimax'];
+    const keyedProviders = ['deepseek', 'glm', 'openrouter', 'kimi', 'minimax', 'openai', 'anthropic'];
     const regionalProviders = ['glm', 'kimi', 'minimax'];
     // Providers whose row owns a collapsible section. Gemini's is a display
     // preference; the rest are credentials.
@@ -738,6 +756,9 @@ INDEX_HTML = """<!doctype html>
     let savedOrder = CONFIG.settings.provider_order;
     let activeOrder = [...savedOrder];
     let dragState = null;
+    // Reordering inside the Menu, kept apart from the card drag above so the
+    // two can never be mid-gesture at once.
+    let rowDrag = null;
     let showClaudeGpt = savedShowClaudeGpt;
 
     function validLayout(value) {
@@ -812,7 +833,7 @@ INDEX_HTML = """<!doctype html>
       resetDisclosure();
       activeOrder = [...savedOrder];
       renderProviderSwitches();
-      renderOrderControls();
+      applyProviderOrder();
       groupInput.checked = savedShowClaudeGpt;
       modeInput.value = savedLayout.mode;
       const initialColumns = savedLayout.columns;
@@ -830,7 +851,7 @@ INDEX_HTML = """<!doctype html>
       activeOrder = [...savedOrder];
       resetDisclosure();
       renderProviderSwitches();
-      renderOrderControls();
+      applyProviderOrder();
       applyLayout(savedLayout);
     }
     function menuPreferences(layout) {
@@ -939,7 +960,7 @@ INDEX_HTML = """<!doctype html>
         // target, so brushing the text silently toggled the provider. The
         // switch alone is clickable now; aria-labelledby keeps the name
         // attached for screen readers and the accessibility tree.
-        '<div class="toggle-setting"><span id="provider-' + name + '-label">' +
+        '<div class="toggle-setting">' + menuGrip(name) + '<span id="provider-' + name + '-label">' +
         esc(CONFIG.display_names[name]) + '</span>' + discloseButton(name) + '<input id="provider-' + name +
         '" data-provider="' + name + '" type="checkbox" role="switch" aria-labelledby="provider-' +
         name + '-label"' + (providerNames.includes(name) ? ' checked' : '') + '></div>';
@@ -997,20 +1018,9 @@ INDEX_HTML = """<!doctype html>
       if (modeInput.value === 'custom' && Number(columnsInput.value) >= 1) {
         rowsInput.value = Math.max(Number(rowsInput.value), Math.ceil(providerNames.length / Number(columnsInput.value)));
       }
-      renderOrderControls();
+      applyProviderOrder();
       scheduleMenuSave(0);
     });
-    function renderOrderControls() {
-      orderList.innerHTML = activeOrder.map((name, index) => {
-        const displayName = CONFIG.display_names[name];
-        return '<li><img class="provider-logo ' + esc(name) + '" src="/logos/' + name + '.svg" alt="">' +
-          '<span class="order-name">' + esc(displayName) + '</span>' +
-          '<button class="order-button" type="button" data-provider="' + name + '" data-direction="-1" ' +
-            'aria-label="Move ' + esc(displayName) + ' earlier" ' + (index === 0 ? 'disabled' : '') + '>↑</button>' +
-          '<button class="order-button" type="button" data-provider="' + name + '" data-direction="1" ' +
-            'aria-label="Move ' + esc(displayName) + ' later" ' + (index === activeOrder.length - 1 ? 'disabled' : '') + '>↓</button></li>';
-      }).join('');
-    }
     function reordered(order, source, target) {
       const next = [...order];
       const from = next.indexOf(source), to = next.indexOf(target);
@@ -1019,26 +1029,131 @@ INDEX_HTML = """<!doctype html>
       next.splice(to, 0, source);
       return next;
     }
-    function moveInMenu(name, direction) {
-      const index = activeOrder.indexOf(name), target = index + direction;
-      if (index < 0 || target < 0 || target >= activeOrder.length) return;
-      activeOrder = reordered(activeOrder, name, activeOrder[target]);
-      renderOrderControls();
-      scheduleMenuSave(0);
-      const button = orderList.querySelector('[data-provider="' + name + '"][data-direction="' + direction + '"]:not(:disabled)') ||
-        orderList.querySelector('[data-provider="' + name + '"]:not(:disabled)');
-      button?.focus();
+    function applyProviderOrder() {
+      // Move the existing rows instead of re-rendering them: a row owns its
+      // API-key input, so rebuilding it would throw away a half-typed key
+      // and whatever a keyboard user is standing on. Appending each row in
+      // turn re-sorts them in place. Disabled providers hold no place in the
+      // order (the server requires it to match the enabled set exactly), so
+      // they trail the rest in base order with an inert grip.
+      const base = Object.keys(CONFIG.display_names);
+      for (const name of [...activeOrder, ...base.filter(name => !activeOrder.includes(name))]) {
+        const row = providerSwitches.querySelector('.provider-setting[data-provider="' + name + '"]');
+        if (row) providerSwitches.appendChild(row);
+      }
+      // Turning a provider on or off changes who can move, so the grips are
+      // patched in place here for the same reason the chevrons are:
+      // re-rendering the rows would destroy the switch just clicked.
+      providerSwitches.querySelectorAll('.drag-handle').forEach(grip => {
+        grip.disabled = !movable(grip.dataset.grip);
+        grip.draggable = movable(grip.dataset.grip);
+      });
     }
+    function movable(name) {
+      return activeOrder.length > 1 && activeOrder.includes(name);
+    }
+    function menuGrip(name) {
+      return '<button class="drag-handle" type="button" data-grip="' + name + '" draggable="' + movable(name) +
+        '" aria-label="Reorder ' + esc(CONFIG.display_names[name]) + '" title="Drag to reorder, or use arrow keys"' +
+        (movable(name) ? '' : ' disabled') +
+        '><svg width="10" height="16" viewBox="0 0 14 20" fill="currentColor" aria-hidden="true">' +
+        '<circle cx="4" cy="4" r="1.5"/><circle cx="10" cy="4" r="1.5"/>' +
+        '<circle cx="4" cy="10" r="1.5"/><circle cx="10" cy="10" r="1.5"/>' +
+        '<circle cx="4" cy="16" r="1.5"/><circle cx="10" cy="16" r="1.5"/></svg></button>';
+    }
+    // The dashboard cards have their own drag block below. The two look
+    // alike but differ where it counts: a row drags only by its grip, lives
+    // in a plain list rather than a grid with empty cells, has to refuse the
+    // disabled rows, and saves through the menu's debounced autosave.
+    function moveRow(source, target) {
+      if (source === target || !activeOrder.includes(source) || !activeOrder.includes(target)) return;
+      activeOrder = reordered(activeOrder, source, target);
+      applyProviderOrder();
+      scheduleMenuSave(0);
+    }
+    function beginRowDrag(source) {
+      if (rowDrag || saving || !movable(source)) return false;
+      rowDrag = {source, target: source};
+      providerSwitches.querySelector('.provider-setting[data-provider="' + source + '"]')?.classList.add('dragging');
+      return true;
+    }
+    function markRowTarget(element) {
+      if (!rowDrag) return;
+      const row = element?.closest('.provider-setting[data-provider]');
+      const name = row && providerSwitches.contains(row) ? row.dataset.provider : null;
+      rowDrag.target = activeOrder.includes(name) ? name : rowDrag.source;
+      providerSwitches.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+      if (rowDrag.target !== rowDrag.source) row.classList.add('drop-target');
+    }
+    function endRowDrag() {
+      const previous = rowDrag;
+      rowDrag = null;
+      providerSwitches.querySelectorAll('.dragging, .drop-target')
+        .forEach(el => el.classList.remove('dragging', 'drop-target'));
+      return previous;
+    }
+    providerSwitches.addEventListener('dragstart', event => {
+      const grip = event.target.closest('.drag-handle');
+      if (rowDrag || !grip || !beginRowDrag(grip.dataset.grip)) { event.preventDefault(); return; }
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', grip.dataset.grip);
+    });
+    providerSwitches.addEventListener('dragover', event => {
+      if (!rowDrag) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      markRowTarget(event.target);
+    });
+    providerSwitches.addEventListener('drop', event => {
+      if (!rowDrag) return;
+      event.preventDefault();
+      markRowTarget(event.target);
+      const {source, target} = endRowDrag();
+      moveRow(source, target);
+    });
+    providerSwitches.addEventListener('dragend', () => { if (rowDrag) endRowDrag(); });
+    // Touch and pen don't get native HTML dragging reliably, so the grip
+    // tracks pointers too. Capture keeps the stream coming once the finger
+    // leaves the grip itself.
+    providerSwitches.addEventListener('pointerdown', event => {
+      const grip = event.target.closest('.drag-handle');
+      if (!grip || event.button !== 0 || !beginRowDrag(grip.dataset.grip)) return;
+      event.preventDefault();
+      rowDrag.pointerId = event.pointerId;
+      grip.setPointerCapture(event.pointerId);
+    });
+    providerSwitches.addEventListener('pointermove', event => {
+      if (rowDrag?.pointerId !== event.pointerId) return;
+      markRowTarget(document.elementFromPoint(event.clientX, event.clientY));
+    });
+    providerSwitches.addEventListener('pointerup', event => {
+      if (rowDrag?.pointerId !== event.pointerId) return;
+      markRowTarget(document.elementFromPoint(event.clientX, event.clientY));
+      const {source, target} = endRowDrag();
+      moveRow(source, target);
+    });
+    providerSwitches.addEventListener('pointercancel', event => {
+      // A native drag taking over cancels the pointer stream; that drag ends
+      // through dragend/drop, so only a grip drag is cancelled here.
+      if (rowDrag?.pointerId === event.pointerId) endRowDrag();
+    });
+    providerSwitches.addEventListener('keydown', event => {
+      const grip = event.target.closest('.drag-handle');
+      if (!grip || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault();
+      const name = grip.dataset.grip;
+      const direction = ['ArrowUp', 'ArrowLeft'].includes(event.key) ? -1 : 1;
+      moveRow(name, activeOrder[activeOrder.indexOf(name) + direction]);
+      // Reordering moves the grip's own row in the DOM, which some browsers
+      // treat as losing focus. Put it back on the row the user is carrying.
+      providerSwitches.querySelector('.drag-handle[data-grip="' + name + '"]')?.focus();
+    });
     async function reorderCards(source, target) {
       if (saving || settings.open || source === target || !activeOrder.includes(source) || !activeOrder.includes(target)) return;
       activeOrder = reordered(activeOrder, source, target);
       applyLayout(savedLayout);
       await savePreferences({layout: savedLayout, show_claude_gpt: savedShowClaudeGpt, provider_order: activeOrder}, false);
     }
-    orderList.addEventListener('click', event => {
-      const button = event.target.closest('[data-direction]');
-      if (button) moveInMenu(button.dataset.provider, Number(button.dataset.direction));
-    });
     function beginDrag(source) {
       if (dragState || saving || settings.open || providerNames.length < 2 || !activeOrder.includes(source)) return false;
       dragState = {source, target: source};
