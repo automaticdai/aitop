@@ -760,7 +760,7 @@ def test_native_drag_survives_browser_cancelling_the_pointer_stream():
 def test_saved_order_is_used_by_cards_and_menu_in_custom_grid():
     cfg = Config.defaults()
     cfg.web.layout = WebLayout("custom", 2, 3)
-    cfg.web.provider_order = ["deepseek", "gemini", "codex", "claude"]
+    cfg.provider_order = ["deepseek", "gemini", "codex", "claude"]
     rendered = _render_in_js(cfg, [], "openSettings();")
     assert rendered["order"] == ["deepseek", "gemini", "codex", "claude"]
     html = rendered["html"]
@@ -774,7 +774,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
         QuotaGroup("Claude & GPT-OSS", daily=Quota(20, 100, "%")),
     ])), snapshot_to_dict(UsageSnapshot("claude"))]
     cfg = Config.defaults()
-    cfg.web.show_claude_gpt = False
+    cfg.show_claude_gpt = False
     rendered = _render_in_js(cfg, data)
     assert "GPT-OSS" not in rendered["html"]
     assert 'class="group-label"' not in rendered["html"]

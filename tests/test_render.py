@@ -5,6 +5,7 @@ from aitop.models import Balance, Quota, QuotaGroup, Spend, UsageSnapshot
 from aitop.render import (
     DISPLAY_NAME,
     LOGOS,
+    QuotaDisplay,
     bar_color,
     bar_pct,
     fmt_pct,
@@ -499,3 +500,50 @@ def test_remaining_render_matches_web_including_groups_and_stale():
     assert "Reset in 4d 1h 24m" in text
     assert "38/50 messages left (76.0%)" in render_stale(snap, "offline", display=display)
     assert format_remaining_value(Quota(1, 0, "%")) == "Remaining unknown"
+
+
+# --- show_claude_gpt (v1.5): the TUI honours the same shared preference the
+# web view does -- hide Antigravity's Claude & GPT-OSS pool. ---
+
+def _antigravity() -> UsageSnapshot:
+    return UsageSnapshot(
+        "gemini",
+        groups=[
+            QuotaGroup(label="Gemini", daily=Quota(0, 100, "%"), weekly=Quota(6, 100, "%")),
+            QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%")),
+        ],
+    )
+
+
+def test_show_claude_gpt_off_hides_the_group():
+    out = render_snapshot(_antigravity(), None, QuotaDisplay(show_claude_gpt=False))
+    assert "Claude & GPT-OSS" not in out
+    assert "35.0%" not in out
+    assert "6.0%" in out
+
+
+def test_show_claude_gpt_off_drops_the_now_redundant_gemini_label():
+    # With only one pool left the "Gemini" heading restates the card title,
+    # exactly as the web view suppresses it.
+    out = render_snapshot(_antigravity(), None, QuotaDisplay(show_claude_gpt=False))
+    assert "Gemini" not in _visible(out)
+
+
+def test_show_claude_gpt_defaults_to_showing_both_groups():
+    out = render_snapshot(_antigravity())
+    assert "Claude & GPT-OSS" in out
+    assert "Gemini" in _visible(out)
+
+
+def test_show_claude_gpt_only_affects_antigravity():
+    snap = UsageSnapshot(
+        "codex",
+        groups=[QuotaGroup(label="Claude & GPT-OSS", weekly=Quota(35, 100, "%"))],
+    )
+    assert "Claude & GPT-OSS" in render_snapshot(snap, None, QuotaDisplay(show_claude_gpt=False))
+
+
+def test_show_claude_gpt_off_applies_to_a_stale_card_too():
+    out = render_stale(_antigravity(), "boom", None, QuotaDisplay(show_claude_gpt=False))
+    assert "Claude & GPT-OSS" not in out
+    assert "6.0%" in out

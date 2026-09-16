@@ -19,7 +19,7 @@ from starlette.routing import Route
 from starlette.types import Lifespan
 
 from . import __version__
-from .config import Config, ConfigError, PROVIDER_NAMES, API_KEY_PROVIDERS, REGIONAL_PROVIDERS, provider_api_key, WebLayout, layout_cells, save_web_settings
+from .config import Config, ConfigError, PROVIDER_NAMES, API_KEY_PROVIDERS, REGIONAL_PROVIDERS, preferred_first, provider_api_key, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
 from .reset_timer import format_reset_note
 from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data, remaining_pct, format_remaining_value
@@ -177,11 +177,10 @@ def build_app(
 
     def ordered_names() -> list[str]:
         names = [name for name in layout_cells(config) if name is not None]
-        preferred = [name for name in config.web.provider_order if name in names]
-        return preferred + [name for name in names if name not in preferred]
+        return preferred_first(config.provider_order, names)
 
     def settings_data() -> dict:
-        return {"layout": asdict(config.web.layout), "show_claude_gpt": config.web.show_claude_gpt,
+        return {"layout": asdict(config.web.layout), "show_claude_gpt": config.show_claude_gpt,
                 "provider_order": ordered_names(),
                 "enabled_providers": [name for name in PROVIDER_NAMES if name in ordered_names()],
                 **{name + "_api_key_configured": bool(provider_api_key(name, config.providers.get(name)))
@@ -276,11 +275,11 @@ def build_app(
 
         def persist() -> tuple[dict, bool]:
             with settings_lock:
-                previous = set(ordered_names())
+                previous = ordered_names()
                 region_changed = any(region != getattr(config.providers.get(name), "region", "global")
                                      for name, region in regions.items())
                 save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_keys=api_keys, regions=regions)
-                return settings_data(), previous != set(ordered_names()) or bool(api_keys) or region_changed
+                return settings_data(), previous != ordered_names() or bool(api_keys) or region_changed
 
         try:
             saved, providers_changed = await run_in_threadpool(persist)

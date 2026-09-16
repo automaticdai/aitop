@@ -274,7 +274,7 @@ def test_load_partial_web_keeps_defaults(tmp_path):
 def test_default_config_toml_includes_web_section():
     data = tomllib.loads(default_config_toml())
     assert data["web"] == {
-        "enabled": False, "host": "127.0.0.1", "port": 8787, "show_claude_gpt": True, "show_remaining": True, "reset_countdown": True, "provider_order": [],
+        "enabled": False, "host": "127.0.0.1", "port": 8787, "show_remaining": True, "reset_countdown": True,
         "layout": {"mode": "adaptive", "rows": 2, "columns": 2},
     }
 
@@ -365,3 +365,88 @@ def test_load_config_ignores_malformed_position_instead_of_crashing(tmp_path):
     p.write_text('[providers.claude]\nposition = ["a", "b"]\n')
     cfg = load_config(p)
     assert cfg.providers["claude"].position is None  # falls back to auto-fill
+
+
+# --- Shared display preferences (v1.5): `show_claude_gpt` and `provider_order`
+# moved out of [web]; both surfaces read the top-level keys. ---
+
+def test_shared_display_prefs_read_from_top_level(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('show_claude_gpt = false\nprovider_order = ["codex", "claude"]\n')
+    cfg = load_config(path)
+    assert cfg.show_claude_gpt is False
+    assert cfg.provider_order == ["codex", "claude"]
+
+
+def test_shared_display_prefs_default_when_absent(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("refresh_interval_s = 10\n")
+    cfg = load_config(path)
+    assert cfg.show_claude_gpt is True
+    assert cfg.provider_order == []
+
+
+def test_legacy_web_scoped_display_prefs_are_still_read(tmp_path):
+    # Files written by =< v1.4 kept both keys under [web]; they must keep
+    # working rather than silently reverting to the defaults.
+    path = tmp_path / "config.toml"
+    path.write_text('[web]\nshow_claude_gpt = false\nprovider_order = ["gemini", "claude"]\n')
+    cfg = load_config(path)
+    assert cfg.show_claude_gpt is False
+    assert cfg.provider_order == ["gemini", "claude"]
+
+
+def test_top_level_display_prefs_win_over_legacy_web_copies(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'show_claude_gpt = true\nprovider_order = ["codex"]\n'
+        '[web]\nshow_claude_gpt = false\nprovider_order = ["gemini"]\n'
+    )
+    cfg = load_config(path)
+    assert cfg.show_claude_gpt is True
+    assert cfg.provider_order == ["codex"]
+
+
+def test_legacy_web_provider_order_is_still_validated(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('[web]\nprovider_order = ["nope"]\n')
+    with pytest.raises(ConfigError, match="web.provider_order"):
+        load_config(path)
+
+
+def test_top_level_provider_order_is_validated(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text('provider_order = ["claude", "claude"]\n')
+    with pytest.raises(ConfigError, match="`provider_order`"):
+        load_config(path)
+
+
+def test_default_config_toml_puts_shared_prefs_at_top_level():
+    data = tomllib.loads(default_config_toml())
+    assert data["show_claude_gpt"] is True
+    assert data["provider_order"] == []
+    assert "show_claude_gpt" not in data["web"]
+    assert "provider_order" not in data["web"]
+
+
+def test_provider_order_drives_auto_fill_under_adaptive_layout():
+    cfg = Config.defaults()
+    cfg.layout.adaptive = True
+    cfg.provider_order = ["deepseek", "gemini"]
+    assert layout_cells(cfg, 4, 1) == ["deepseek", "gemini", "claude", "codex"]
+
+
+def test_provider_order_does_not_override_explicit_positions():
+    # A fixed layout's `position` is an explicit instruction; the preferred
+    # order only decides how the remaining providers auto-fill.
+    cfg = Config.defaults()
+    cfg.provider_order = ["deepseek", "gemini"]
+    cfg.providers["claude"].position = (1, 1)
+    assert layout_cells(cfg, 4, 1) == ["claude", "deepseek", "gemini", "codex"]
+
+
+def test_provider_order_ignores_names_that_are_off():
+    cfg = Config.defaults()
+    cfg.layout.adaptive = True
+    cfg.provider_order = ["copilot", "deepseek"]
+    assert layout_cells(cfg, 4, 1) == ["deepseek", "claude", "codex", "gemini"]

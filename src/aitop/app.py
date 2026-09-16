@@ -221,7 +221,8 @@ class AitopApp(App):
         # placed in order, and CSS Grid leaves the final partial row empty.
         # Fixed layouts retain their placeholders so explicitly blank cells
         # preserve the configured grid shape.
-        display = QuotaDisplay(self.config.show_remaining, self.config.reset_countdown)
+        display = QuotaDisplay(self.config.show_remaining, self.config.reset_countdown,
+                               self.config.show_claude_gpt)
         children = (
             (SnapshotRow(name, display) for name in cells if name)
             if self.config.layout.adaptive

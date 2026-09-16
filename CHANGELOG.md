@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.5 — 2026-09-16
+
+- Honour `show_claude_gpt` and `provider_order` in the terminal UI, not only the web view. The dashboard now hides Antigravity's Claude & GPT-OSS pool when that preference is off, and lays its cards out in the saved provider order — so dragging a card in the browser moves it in the terminal too.
+- Move both keys out of `[web]` to the top level, alongside `show_remaining` and `reset_countdown`, since they are no longer web-only. Existing files keep working: the `[web]` copies are still read, and the next save through the Menu rewrites them at the top level.
+- Notify a running dashboard when the only change is the card order. The change detector compared sets of provider names, so a reorder never reached the terminal UI.
+
+Upgrade the package and restart aitop.
+
 ## v1.4 — 2026-09-09
 
 - Add **OpenAI Platform** and **Claude Platform** cards, showing what an organization has been charged today, this week, and this month from each vendor's cost API. Both are opt-in and need an *organization admin* key — an ordinary inference key is refused — so `OPENAI_ADMIN_KEY` and `ANTHROPIC_ADMIN_KEY` are read before the plain `*_API_KEY` names. Neither platform publishes a readable balance, so these cards show spend alone.

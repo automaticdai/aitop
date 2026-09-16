@@ -48,6 +48,15 @@ def provider_api_key(name: str, pc: "ProviderConfig | None") -> str | None:
     return next((os.environ[n] for n in names if os.environ.get(n)), None)
 
 
+def _as_provider_order(data: dict, key: str, label: str, path: Path) -> list[str]:
+    order = data.get(key, [])
+    if (not isinstance(order, list)
+            or any(not isinstance(name, str) or name not in PROVIDER_NAMES for name in order)
+            or len(set(order)) != len(order)):
+        raise ConfigError(f"{path}: `{label}` must contain unique built-in provider names")
+    return order
+
+
 class ConfigError(ValueError):
     """A config file is present but invalid (bad TOML, wrong types, unreadable)."""
 
@@ -126,10 +135,8 @@ class WebConfig:
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = 8787
-    show_claude_gpt: bool = True
     show_remaining: bool = True
     reset_countdown: bool = True
-    provider_order: list[str] = field(default_factory=list)
     layout: WebLayout = field(default_factory=WebLayout)
 
 
@@ -138,6 +145,11 @@ class Config:
     refresh_interval_s: float = 30.0
     show_remaining: bool = True
     reset_countdown: bool = True
+    # Shared by both surfaces, like show_remaining/reset_countdown above:
+    # the dashboard and the web view render the same providers in the same
+    # order, so these are not [web]-scoped (they were until v1.4).
+    show_claude_gpt: bool = True
+    provider_order: list[str] = field(default_factory=list)
     layout: Layout = field(default_factory=Layout)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     web: WebConfig = field(default_factory=WebConfig)
@@ -147,6 +159,18 @@ class Config:
     def defaults(cls) -> "Config":
         return cls(providers={name: ProviderConfig(enabled=name not in _OPT_IN)
                              for name in PROVIDER_NAMES})
+
+
+def preferred_first(order: list[str], names: list[str]) -> list[str]:
+    """`names` reordered so the ones listed in `order` lead, in that order.
+
+    Shared by the dashboard's auto-fill and the web view's card order so both
+    surfaces read `provider_order` the same way: names absent from `order`
+    keep their base PROVIDER_NAMES sequence at the back, and names in `order`
+    that aren't on offer here (off, or not built in) are simply skipped.
+    """
+    preferred = [name for name in order if name in names]
+    return preferred + [name for name in names if name not in preferred]
 
 
 def place_providers(
@@ -204,7 +228,9 @@ def place_providers(
         placement[name] = (r, c)
         occupied.add((r, c))
 
-    auto_iter = iter(auto)
+    # Explicit positions above are an instruction about a specific cell, so
+    # they win; `provider_order` only decides the sequence the rest fill in.
+    auto_iter = iter(preferred_first(config.provider_order, auto))
     for r in range(1, rows + 1):
         for c in range(1, columns + 1):
             if (r, c) in occupied:
@@ -257,6 +283,9 @@ def default_config_toml() -> str:
         f"show_remaining = {str(cfg.show_remaining).lower()}",
         "# Session timers use yh zm; other windows use xd yh zm.",
         f"reset_countdown = {str(cfg.reset_countdown).lower()}",
+        "# Show the Claude & GPT-OSS pool inside the Antigravity card.",
+        f"show_claude_gpt = {str(cfg.show_claude_gpt).lower()}",
+        "provider_order = [] # Empty follows the base provider order.",
         "",
         "[layout]",
         f"adaptive = {str(cfg.layout.adaptive).lower()}",
@@ -267,10 +296,8 @@ def default_config_toml() -> str:
         f'enabled = {str(cfg.web.enabled).lower()}',
         f'host = "{cfg.web.host}"',
         f"port = {cfg.web.port}",
-        f"show_claude_gpt = {str(cfg.web.show_claude_gpt).lower()}",
         f"show_remaining = {str(cfg.web.show_remaining).lower()}",
         f"reset_countdown = {str(cfg.web.reset_countdown).lower()}",
-        "provider_order = [] # Empty follows the base provider order.",
         "",
         "[web.layout]",
         f'mode = "{cfg.web.layout.mode}"',
@@ -323,6 +350,8 @@ def _parse_config(path: Path) -> Config:
     cfg.refresh_interval_s = _as_float(data, "refresh_interval_s", cfg.refresh_interval_s, path)
     cfg.show_remaining = _as_bool(data, "show_remaining", True, path)
     cfg.reset_countdown = _as_bool(data, "reset_countdown", True, path)
+    cfg.show_claude_gpt = _as_bool(data, "show_claude_gpt", True, path)
+    cfg.provider_order = _as_provider_order(data, "provider_order", "provider_order", path)
     cfg.web.show_remaining = cfg.show_remaining
     cfg.web.reset_countdown = cfg.reset_countdown
 
@@ -345,15 +374,17 @@ def _parse_config(path: Path) -> Config:
             cfg.web.host = str(web_data["host"])
         if "port" in web_data:
             cfg.web.port = _as_int(web_data, "port", cfg.web.port, path)
-        cfg.web.show_claude_gpt = _as_bool(web_data, "show_claude_gpt", True, path)
         cfg.web.show_remaining = _as_bool(web_data, "show_remaining", cfg.show_remaining, path)
         cfg.web.reset_countdown = _as_bool(web_data, "reset_countdown", cfg.reset_countdown, path)
-        order = web_data.get("provider_order", [])
-        if (not isinstance(order, list)
-                or any(not isinstance(name, str) or name not in PROVIDER_NAMES for name in order)
-                or len(set(order)) != len(order)):
-            raise ConfigError(f"{path}: `web.provider_order` must contain unique built-in provider names")
-        cfg.web.provider_order = order
+        # Both keys moved out of [web] in v1.5 (they were never web-only
+        # preferences). Files written before that still carry them here, so
+        # they are read -- but validated the same way, and only when the
+        # top-level key hasn't already answered for them.
+        legacy_order = _as_provider_order(web_data, "provider_order", "web.provider_order", path)
+        if "provider_order" not in data:
+            cfg.provider_order = legacy_order
+        if "show_claude_gpt" in web_data and "show_claude_gpt" not in data:
+            cfg.show_claude_gpt = _as_bool(web_data, "show_claude_gpt", True, path)
         web_layout = web_data.get("layout", {})
         if not isinstance(web_layout, dict):
             raise ConfigError(f"{path}: `web.layout` must be a table")
@@ -469,10 +500,14 @@ def save_web_settings(
     try:
         original = path.read_text()
         document = tomlkit.parse(original)
-        web = document.setdefault("web", tomlkit.table())
-        web["show_claude_gpt"] = show_claude_gpt
+        document["show_claude_gpt"] = show_claude_gpt
         if provider_order is not None:
-            web["provider_order"] = provider_order
+            document["provider_order"] = provider_order
+        web = document.setdefault("web", tomlkit.table())
+        # Both keys lived under [web] until v1.5. Saving migrates the file
+        # rather than leaving a second copy behind for the loader to trip on.
+        web.pop("show_claude_gpt", None)
+        web.pop("provider_order", None)
         table = web.setdefault("layout", tomlkit.table())
         table["mode"] = layout.mode
         table["rows"] = layout.rows
@@ -510,9 +545,9 @@ def save_web_settings(
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
     config.web.layout = layout
-    config.web.show_claude_gpt = show_claude_gpt
+    config.show_claude_gpt = show_claude_gpt
     if provider_order is not None:
-        config.web.provider_order = list(provider_order)
+        config.provider_order = list(provider_order)
     if updated is not None:
         config.providers = updated.providers
         config.layout = updated.layout
