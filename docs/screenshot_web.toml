@@ -3,6 +3,8 @@
 refresh_interval_s = 30
 show_remaining = true
 reset_countdown = true # Sessions: yh zm; other windows: xd yh zm.
+show_claude_gpt = true
+provider_order = ["claude", "codex", "gemini", "deepseek"]
 
 [layout]
 adaptive = true
@@ -11,10 +13,8 @@ adaptive = true
 enabled = true
 host = "127.0.0.1"
 port = 8788
-show_claude_gpt = true
 show_remaining = true
 reset_countdown = true
-provider_order = ["claude", "codex", "gemini", "deepseek"]
 
 [web.layout]
 mode = "custom"

@@ -21,6 +21,27 @@ import pyte
 DialogResponse = tuple[tuple[str, ...], str]
 
 
+class _Screen(pyte.Screen):
+    """A pyte screen that tolerates private-marker SGR sequences.
+
+    pyte routes any private-marker CSI ending in `m` -- e.g. `CSI ? 4 m` --
+    to `select_graphic_rendition(private=True)`, which the base method does
+    not accept, so one such sequence aborts an entire capture with a
+    TypeError. There is no pyte release that fixes this (0.8.2 is the
+    newest), and the sequence only ever sets styling we discard anyway,
+    since `_render` reads plain text. Dropping the marker keeps the
+    surrounding output instead of losing the screen.
+    """
+
+    def select_graphic_rendition(self, *attrs, **kwargs) -> None:
+        kwargs.pop("private", None)
+        super().select_graphic_rendition(*attrs, **kwargs)
+
+
+def _new_screen(cols: int, rows: int) -> _Screen:
+    return _Screen(cols, rows)
+
+
 def _terminal_queries_response(chunk: bytes) -> bytes:
     """Answer the terminal capability queries a modern TUI sends at startup.
 
@@ -65,7 +86,7 @@ def _drive(
     """
     # Construct fallible Python-side state before allocating the PTY, so an
     # allocation error cannot leave a freshly forked child without cleanup.
-    screen = pyte.Screen(cols, rows)
+    screen = _new_screen(cols, rows)
     steps: list[tuple[str, str]] = []
     pid, fd = pty.fork()
     if pid == 0:

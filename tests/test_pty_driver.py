@@ -3,8 +3,10 @@ import os
 import time
 from pathlib import Path
 
+import pyte
 import pytest
 
+from aitop.providers import pty_driver
 from aitop.providers.pty_driver import drive_screen, drive_screen_async, drive_screen_steps
 
 
@@ -218,3 +220,28 @@ def test_cancelling_async_capture_reaps_its_cli_child(tmp_path):
     assert elapsed < 3.0
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_private_marker_sgr_does_not_crash_the_screen():
+    """A `CSI ? ... m` sequence must be ignored, not raise.
+
+    pyte 0.8.2 (the newest release) routes any private-marker CSI ending in
+    `m` to `select_graphic_rendition(private=True)`, which that method does
+    not accept -- so a single such byte sequence aborts the whole capture with
+    a TypeError. The Gemini CLI emits one; nothing stops a future claude,
+    codex, or agy release from doing the same, which would take those cards
+    down with it. Rendering must survive it and keep the surrounding text.
+    """
+    screen = pty_driver._new_screen(20, 3)
+    stream = pyte.Stream(screen)
+    stream.feed("before\x1b[?4mafter")
+    assert "beforeafter" in pty_driver._render(screen)
+
+
+def test_ordinary_sgr_still_applies():
+    # The tolerant screen must only drop the private marker, not stop
+    # handling real SGR -- feeding a normal colour sequence still parses.
+    screen = pty_driver._new_screen(20, 3)
+    stream = pyte.Stream(screen)
+    stream.feed("\x1b[31mred\x1b[0m plain")
+    assert "red plain" in pty_driver._render(screen)

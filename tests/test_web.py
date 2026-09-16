@@ -49,7 +49,7 @@ def test_copilot_monthly_groups_render_in_browser():
     assert "Premium requests" in rendered["html"]
     assert "75.0% left" in rendered["html"]
     assert rendered["html"].count("Unlimited") == 2
-    assert "GitHub Copilot" in rendered["orderHtml"]
+    assert "copilot" in rendered["order"]
 
 
 def test_snapshot_to_dict_serializes_quota_with_pct_and_color():
@@ -427,6 +427,11 @@ const context = vm.createContext({
   },
   setInterval: (fn, ms) => { interval = ms; },
   setTimeout: () => 1, clearTimeout: () => {},
+  // Reordering happens on the grip inside a provider row. The minimal DOM
+  // has no real nodes to drag, so tests press the grip's arrow keys, which
+  // is the same entry point a keyboard user takes.
+  moveGrip: (name, key) => elements['provider-switches'].listeners.keydown(
+    {target: {closest: () => ({dataset: {grip: name}})}, key, preventDefault() {}}),
 });
 (async () => {
 vm.runInContext(input.script, context);
@@ -436,7 +441,7 @@ await vm.runInContext('(async () => {' + input.actions + '})()', context);
 process.stdout.write(JSON.stringify({loading, html: cards.innerHTML, style: cards.style,
   classes: [...classes], interval, writes, status: element('layout-status').textContent,
   error: element('layout-error').textContent, errorHidden: element('layout-error').hidden,
-  orderHtml: element('provider-order').innerHTML,
+  order: vm.runInContext('activeOrder', context),
   providerSwitchHtml: Object.keys(elements).filter(id => id.startsWith('provider-toggle-'))
     .map(id => elements[id].innerHTML).join(''),
   optionsHidden: Object.fromEntries(Object.keys(elements).filter(id => id.endsWith('-options'))
@@ -567,15 +572,40 @@ def test_grid_adaptive_override_keeps_disabled_providers_hidden():
 
 def test_menu_order_autosaves_and_flushes_on_close():
     cfg = Config.defaults()
-    previewed = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1);")
-    for html in (previewed["html"], previewed["orderHtml"]):
-        assert html.index('DeepSeek') < html.index('Antigravity')
+    previewed = _render_in_js(cfg, [], "openSettings(); moveGrip('deepseek', 'ArrowUp');")
+    assert previewed["order"] == ["claude", "codex", "deepseek", "gemini"]
+    assert previewed["html"].index('DeepSeek') < previewed["html"].index('Antigravity')
     assert previewed["writes"] == []
-    cancelled = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); await closeSettings();")
+    cancelled = _render_in_js(cfg, [], "openSettings(); moveGrip('deepseek', 'ArrowUp'); await closeSettings();")
     assert cancelled["html"].index('DeepSeek') < cancelled["html"].index('Antigravity')
     assert len(cancelled["writes"]) == 1
-    saved = _render_in_js(cfg, [], "openSettings(); moveInMenu('deepseek', -1); await flushMenuSave();")
+    saved = _render_in_js(cfg, [], "openSettings(); moveGrip('deepseek', 'ArrowUp'); await flushMenuSave();")
     assert json.loads(saved["writes"][0]["body"])["provider_order"] == ["claude", "codex", "deepseek", "gemini"]
+
+
+def test_a_grip_at_the_end_of_the_order_cannot_move_further():
+    # The step off either end has no target, so it is a no-op rather than a
+    # wrap-around -- and it must not queue a save of an unchanged order.
+    cfg = Config.defaults()
+    top = _render_in_js(cfg, [], "openSettings(); moveGrip('claude', 'ArrowUp');")
+    assert top["order"] == ["claude", "codex", "gemini", "deepseek"]
+    assert top["writes"] == []
+    bottom = _render_in_js(cfg, [], "openSettings(); moveGrip('deepseek', 'ArrowDown'); await flushMenuSave();")
+    assert bottom["order"] == ["claude", "codex", "gemini", "deepseek"]
+    assert bottom["writes"] == []
+
+
+def test_a_disabled_provider_cannot_be_dragged_into_the_order():
+    # Only enabled providers hold a place in the order, so a grip on an
+    # off row must refuse both as a source and as a drop target.
+    rendered = _render_in_js(Config.defaults(), [], """
+      openSettings();
+      moveGrip('kimi', 'ArrowUp');
+      if (beginRowDrag('kimi')) throw new Error('a disabled row started a drag');
+      moveRow('claude', 'kimi');
+    """)
+    assert rendered["order"] == ["claude", "codex", "gemini", "deepseek"]
+    assert rendered["writes"] == []
 
 
 def test_autosave_queues_latest_changes_while_a_request_is_running():
@@ -730,11 +760,12 @@ def test_native_drag_survives_browser_cancelling_the_pointer_stream():
 def test_saved_order_is_used_by_cards_and_menu_in_custom_grid():
     cfg = Config.defaults()
     cfg.web.layout = WebLayout("custom", 2, 3)
-    cfg.web.provider_order = ["deepseek", "gemini", "codex", "claude"]
+    cfg.provider_order = ["deepseek", "gemini", "codex", "claude"]
     rendered = _render_in_js(cfg, [], "openSettings();")
-    for html in (rendered["html"], rendered["orderHtml"]):
-        assert html.index('DeepSeek') < html.index('Antigravity') < html.index('Codex') < html.index('Claude Code')
-    assert rendered["html"].count('class="empty-cell"') == 2
+    assert rendered["order"] == ["deepseek", "gemini", "codex", "claude"]
+    html = rendered["html"]
+    assert html.index('DeepSeek') < html.index('Antigravity') < html.index('Codex') < html.index('Claude Code')
+    assert html.count('class="empty-cell"') == 2
 
 
 def test_group_toggle_autosaves_and_survives_menu_close():
@@ -743,7 +774,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
         QuotaGroup("Claude & GPT-OSS", daily=Quota(20, 100, "%")),
     ])), snapshot_to_dict(UsageSnapshot("claude"))]
     cfg = Config.defaults()
-    cfg.web.show_claude_gpt = False
+    cfg.show_claude_gpt = False
     rendered = _render_in_js(cfg, data)
     assert "GPT-OSS" not in rendered["html"]
     assert 'class="group-label"' not in rendered["html"]

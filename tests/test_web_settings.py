@@ -55,8 +55,8 @@ still a string"""
     assert result.json() == EXPECTED_PREFS
     document = tomllib.loads(path.read_text())
     assert document["web"]["layout"] == PREFERENCES["layout"]
-    assert document["web"]["show_claude_gpt"] is False
-    assert document["web"]["provider_order"] == PREFERENCES["provider_order"]
+    assert document["show_claude_gpt"] is False
+    assert document["provider_order"] == PREFERENCES["provider_order"]
     assert document["web"]["port"] == 9999
     assert document["providers"]["codex"]["timeout_s"] == 9
     assert "[web.layout]" in document["custom"]["text"]
@@ -129,11 +129,11 @@ def test_save_refuses_to_overwrite_an_invalid_file(tmp_path):
 
 def test_config_tracks_resolved_source_and_parses_web_preferences(tmp_path):
     path = tmp_path / "custom.toml"
-    path.write_text('[web]\nshow_claude_gpt = false\n[web.layout]\nmode = "custom"\nrows = 1\ncolumns = 4\n')
+    path.write_text('show_claude_gpt = false\n[web.layout]\nmode = "custom"\nrows = 1\ncolumns = 4\n')
     cfg = load_config(path)
     assert cfg.source_path == path.resolve()
     assert cfg.web.layout == WebLayout("custom", 1, 4)
-    assert cfg.web.show_claude_gpt is False
+    assert cfg.show_claude_gpt is False
 
 
 @pytest.mark.parametrize("text", [
@@ -183,7 +183,7 @@ def test_old_client_omitting_order_preserves_saved_order(tmp_path):
     assert client.put("/api/settings", json=PREFERENCES, headers=headers).status_code == 200
     payload = {key: value for key, value in PREFERENCES.items() if key != "provider_order"}
     assert client.put("/api/settings", json=payload, headers=headers).json()["provider_order"] == PREFERENCES["provider_order"]
-    assert load_config(path).web.provider_order == PREFERENCES["provider_order"]
+    assert load_config(path).provider_order == PREFERENCES["provider_order"]
 
 
 @pytest.mark.parametrize("order", ['"codex"', '["codex", "codex"]', '["unknown"]', '[1]'])
@@ -381,3 +381,61 @@ def test_regional_provider_settings_validation(tmp_path, name, field, value):
     response = client.put('/api/settings', json={**PREFERENCES, name + '_' + field: value}, headers=headers)
     assert response.status_code == 400
     assert path.read_text() == original
+
+
+# --- v1.5: shared display preferences live at the top level, not under [web]. ---
+
+def test_saving_writes_shared_prefs_at_the_top_level(tmp_path):
+    path = tmp_path / "config.toml"
+    client, headers = _client(path)
+    assert client.put("/api/settings", json=PREFERENCES, headers=headers).status_code == 200
+    document = tomllib.loads(path.read_text())
+    assert document["show_claude_gpt"] is False
+    assert document["provider_order"] == PREFERENCES["provider_order"]
+    assert "show_claude_gpt" not in document["web"]
+    assert "provider_order" not in document["web"]
+
+
+def test_saving_migrates_a_legacy_web_scoped_file(tmp_path):
+    # A file written by an older aitop must end up with exactly one copy of
+    # each key, so the next load can't read a stale [web] value.
+    path = tmp_path / "config.toml"
+    path.write_text('[web]\nshow_claude_gpt = true\nprovider_order = ["codex", "claude"]\n')
+    client, headers = _client(path)
+    assert client.put("/api/settings", json=PREFERENCES, headers=headers).status_code == 200
+    document = tomllib.loads(path.read_text())
+    assert "show_claude_gpt" not in document.get("web", {})
+    assert "provider_order" not in document.get("web", {})
+    reloaded = load_config(path)
+    assert reloaded.show_claude_gpt is False
+    assert reloaded.provider_order == PREFERENCES["provider_order"]
+
+
+def test_reordering_alone_notifies_the_dashboard(tmp_path):
+    # The change detector compared *sets* of provider names, so a pure
+    # reorder never reached the TUI -- which now renders that order too.
+    path = tmp_path / "config.toml"
+    config = load_config(path)
+    notified = []
+    client = TestClient(build_app(SnapshotStore(), config, on_provider_change=lambda: notified.append(True)))
+    token = json.loads(re.search(r"const CONFIG = (.*);", client.get("/").text).group(1))["settings_token"]
+    prefs = client.get("/api/settings").json()
+    payload = {"layout": {"mode": "adaptive", "rows": 2, "columns": 2}, "show_claude_gpt": True,
+               "enabled_providers": prefs["enabled_providers"],
+               "provider_order": list(reversed(prefs["provider_order"]))}
+    assert client.put("/api/settings", json=payload, headers={"X-Aitop-Token": token}).status_code == 200
+    assert notified == [True]
+
+
+def test_saving_an_unchanged_order_does_not_notify(tmp_path):
+    path = tmp_path / "config.toml"
+    config = load_config(path)
+    notified = []
+    client = TestClient(build_app(SnapshotStore(), config, on_provider_change=lambda: notified.append(True)))
+    token = json.loads(re.search(r"const CONFIG = (.*);", client.get("/").text).group(1))["settings_token"]
+    prefs = client.get("/api/settings").json()
+    payload = {"layout": {"mode": "adaptive", "rows": 2, "columns": 2}, "show_claude_gpt": True,
+               "enabled_providers": prefs["enabled_providers"],
+               "provider_order": prefs["provider_order"]}
+    assert client.put("/api/settings", json=payload, headers={"X-Aitop-Token": token}).status_code == 200
+    assert notified == []

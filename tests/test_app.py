@@ -451,3 +451,38 @@ def test_row_re_renders_when_a_resize_changes_the_layout():
         assert stacked()
 
     _run(scenario, cfg)
+
+
+def test_tui_card_order_follows_provider_order():
+    # v1.5: `provider_order` is a shared preference, so reordering cards in
+    # the web Menu moves them in the dashboard too.
+    cfg = Config.defaults()
+    cfg.refresh_interval_s = 3600.0
+    cfg.layout.adaptive = True
+    cfg.provider_order = ["deepseek", "gemini"]
+
+    async def scenario():
+        app = AitopApp(config=cfg, mock=True)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            assert [row.provider for row in app.query(SnapshotRow)] == [
+                "deepseek", "gemini", "claude", "codex"
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_tui_cards_honour_show_claude_gpt():
+    cfg = Config.defaults()
+    cfg.refresh_interval_s = 3600.0
+    cfg.layout.adaptive = True
+    cfg.show_claude_gpt = False
+
+    async def scenario():
+        app = AitopApp(config=cfg, mock=True)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            row = next(r for r in app.query(SnapshotRow) if r.provider == "gemini")
+            assert row._quota_display.show_claude_gpt is False
+
+    asyncio.run(scenario())

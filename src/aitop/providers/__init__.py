@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..config import Config, place_providers
+from .anthropic import AnthropicProvider
 from .claude import ClaudeProvider
 from .codex import CodexProvider
 from .copilot import CopilotProvider
@@ -9,6 +10,7 @@ from .gemini import GeminiProvider
 from .kimi import KimiProvider
 from .minimax import MiniMaxProvider
 from .mock import MockProvider
+from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
 from .glm import GLMProvider
 
@@ -26,6 +28,9 @@ def build_providers(config: Config, mock: bool = False) -> list:
             provider = DeepSeekProvider(api_key=config.providers[name].api_key)
         elif name == "openrouter":
             provider = OpenRouterProvider(api_key=config.providers[name].api_key)
+        elif name in ("openai", "anthropic"):
+            adapter = {"openai": OpenAIProvider, "anthropic": AnthropicProvider}[name]
+            provider = adapter(api_key=config.providers[name].api_key)
         elif name in ("glm", "kimi", "minimax"):
             adapter = {"glm": GLMProvider, "kimi": KimiProvider, "minimax": MiniMaxProvider}[name]
             provider = adapter(api_key=config.providers[name].api_key, region=config.providers[name].region)

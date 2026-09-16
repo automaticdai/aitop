@@ -44,6 +44,8 @@ DISPLAY_NAME = {
     "openrouter": "OpenRouter",
     "kimi": "Kimi",
     "minimax": "MiniMax",
+    "openai": "OpenAI Platform",
+    "anthropic": "Claude Platform",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -104,6 +106,11 @@ LOGOS = {
     "openrouter": f"[#6467F2]{_text_art('OPENROUTER')}[/]",  # OpenRouter indigo
     "kimi": f"[#1783FF]{_text_art('KIMI')}[/]",  # Moonshot blue
     "minimax": f"[#E2167E]{_text_art('MINIMAX')}[/]",  # MiniMax magenta
+    # The two platform cards name the same two companies as the Codex and
+    # Claude Code cards; the card's own border title is what separates
+    # "OpenAI Platform" from "Codex" and "Claude Platform" from "Claude Code".
+    "openai": f"[#10A37F]{_text_art('OPENAI')}[/]",
+    "anthropic": f"[#D97757]{_text_art('ANTHROPIC')}[/]",
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -121,6 +128,8 @@ LOGO_WIDTH = {
     "openrouter": 5 * len("OPENROUTER") - 1,
     "kimi": 5 * len("KIMI") - 1,
     "minimax": 5 * len("MINIMAX") - 1,
+    "openai": 5 * len("OPENAI") - 1,
+    "anthropic": 5 * len("ANTHROPIC") - 1,
 }
 
 
@@ -201,6 +210,7 @@ def _fit_bar(width: int | None, value: str) -> int:
 class QuotaDisplay:
     show_remaining: bool = False
     reset_countdown: bool = False
+    show_claude_gpt: bool = True
     fetched_at: float = 0
 
 
@@ -271,7 +281,7 @@ def _group_cell(group: QuotaGroup, width: int | None = None, display: QuotaDispl
     # Dimmed: the label names the pool, the bars under it carry the actual
     # reading, so it should recede rather than compete with them. The visible
     # width is unchanged -- markup isn't drawn.
-    lines = [(f"[dim]{escape(group.label)}[/dim]", len(group.label))]
+    lines = [(f"[dim]{escape(group.label)}[/dim]", len(group.label))] if group.label else []
     if group.daily is not None:
         lines.extend(_quota_cell("daily", group.daily, width, display))
     if group.weekly is not None:
@@ -339,6 +349,24 @@ def _group_lines(groups: list[QuotaGroup], width: int | None = None, display: Qu
     return lines
 
 
+# Antigravity reports a second pool for the Claude and GPT-OSS models it can
+# drive. Users on a plan that doesn't include them want the card to stop
+# reserving space for a bar they can't use, so it's hidden by preference --
+# the same rule the web view applies.
+CLAUDE_GPT_LABEL = "Claude & GPT-OSS"
+
+
+def _visible_groups(snap: UsageSnapshot, display: QuotaDisplay) -> list[QuotaGroup]:
+    groups = snap.groups or []
+    if display.show_claude_gpt or snap.provider != "gemini":
+        return groups
+    kept = [g for g in groups if g.label != CLAUDE_GPT_LABEL]
+    if len(kept) == 1 and len(kept) < len(groups) and kept[0].label == "Gemini":
+        # Sole surviving pool: its heading now just restates the card title.
+        kept = [replace(kept[0], label="")]
+    return kept
+
+
 def _client_info_line(snap: UsageSnapshot) -> str:
     """The dim single-line client info, or "" when the snapshot has none.
 
@@ -366,7 +394,7 @@ def _value_lines(snap: UsageSnapshot, width: int | None = None, display: QuotaDi
             lines.append("         [red]insufficient for API calls[/red]")
     if snap.spend:
         lines.extend(_spend_lines(snap.spend))
-    lines.extend(_group_lines(snap.groups or [], width, display))
+    lines.extend(_group_lines(_visible_groups(snap, display), width, display))
     return lines
 
 
