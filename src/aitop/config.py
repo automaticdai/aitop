@@ -339,7 +339,8 @@ def _ensure_default_file(path: Path) -> None:
 
 def _parse_config(path: Path) -> Config:
     try:
-        data = tomllib.loads(path.read_text())
+        text = path.read_text()
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: invalid TOML: {exc}") from exc
     except OSError as exc:
@@ -426,7 +427,27 @@ def _parse_config(path: Path) -> Config:
                             pass  # malformed position -> auto-fill, don't crash
                 if "timeout_s" in pdata:
                     pc.timeout_s = _as_float(pdata, "timeout_s", pc.timeout_s, path)
+    _migrate_zero_based_positions(cfg, text)
     return cfg
+
+
+def _migrate_zero_based_positions(cfg: Config, text: str) -> None:
+    """Shift positions from pre-release files, which numbered cells from 0.
+
+    Under 1-based coordinates a 0 is out of the grid, so such a file would
+    silently hide every card. A file is treated as 0-based when some position
+    has a 0 coordinate and the file doesn't declare itself 1-based. Once a
+    Menu save rewrites the positions no 0 remains, so this never reapplies.
+    Negative positions are "off" markers in both schemes and stay as they are.
+    """
+    if "1-based" in text:
+        return
+    positions = [pc.position for pc in cfg.providers.values() if pc.position is not None]
+    if not any(0 in pos for pos in positions):
+        return
+    for pc in cfg.providers.values():
+        if pc.position is not None and min(pc.position) >= 0:
+            pc.position = (pc.position[0] + 1, pc.position[1] + 1)
 
 
 def load_config(path: Path | str | None = None) -> Config:

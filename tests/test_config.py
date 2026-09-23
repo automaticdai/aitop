@@ -450,3 +450,75 @@ def test_provider_order_ignores_names_that_are_off():
     cfg.layout.adaptive = True
     cfg.provider_order = ["copilot", "deepseek"]
     assert layout_cells(cfg, 4, 1) == ["deepseek", "claude", "codex", "gemini"]
+
+
+# Written by pre-release builds, which numbered cells from 0.
+LEGACY_ZERO_BASED = """\
+# aitop configuration (generated on first run — edit and restart to apply).
+#
+# `position = [row, col]` places a provider in the [layout] grid.
+# Coordinates are 0-based and row-first: [0, 0] is the top-left cell.
+# Set a provider to [-1, -1] to turn it off (not shown, not polled).
+
+refresh_interval_s = 30
+
+[layout]
+rows = 4
+columns = 1
+
+[providers.claude]
+position = [0, 0]
+
+[providers.codex]
+position = [1, 0]
+
+[providers.gemini]
+position = [2, 0]
+
+[providers.deepseek]
+position = [3, 0]
+"""
+
+
+def test_legacy_zero_based_positions_are_shifted_to_one_based(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(LEGACY_ZERO_BASED)
+    cfg = load_config(p)
+    assert place_providers(cfg) == {
+        "claude": (1, 1), "codex": (2, 1), "gemini": (3, 1), "deepseek": (4, 1),
+    }
+
+
+def test_zero_based_migration_leaves_off_markers_alone(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[layout]\nrows = 1\ncolumns = 2\n"
+        "[providers.claude]\nposition = [0, 1]\n"
+        "[providers.codex]\nposition = [-1, -1]\n"
+    )
+    cfg = load_config(p)
+    assert cfg.providers["claude"].position == (1, 2)
+    assert cfg.providers["codex"].position == (-1, -1)
+
+
+def test_one_based_file_with_a_stray_zero_is_not_migrated(tmp_path):
+    # The header says 1-based, so [0, 1] is just an out-of-grid (off) cell.
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "# Coordinates are 1-based and row-first: [1, 1] is the top-left cell.\n"
+        "[providers.claude]\nposition = [1, 1]\n"
+        "[providers.codex]\nposition = [0, 1]\n"
+    )
+    cfg = load_config(p)
+    assert cfg.providers["claude"].position == (1, 1)
+    assert cfg.providers["codex"].position == (0, 1)
+
+
+def test_zero_based_migration_is_not_reapplied_once_positions_are_one_based(tmp_path):
+    # After a Menu save the positions are 1-based but the old header remains.
+    p = tmp_path / "config.toml"
+    p.write_text(LEGACY_ZERO_BASED.replace("[0, 0]\n", "[1, 1]\n")
+                 .replace("[1, 0]", "[2, 1]").replace("[2, 0]", "[3, 1]").replace("[3, 0]", "[4, 1]"))
+    cfg = load_config(p)
+    assert cfg.providers["claude"].position == (1, 1)
+    assert cfg.providers["deepseek"].position == (4, 1)
