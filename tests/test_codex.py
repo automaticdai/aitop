@@ -28,9 +28,14 @@ def test_parse_real_status_screen():
 
 
 def test_parse_monthly_only_screen_does_not_substitute_for_weekly():
+    # tests/fixtures/codex_usage_monthly.txt is a real `codex /status` PTY
+    # capture (v0.152.0) from a plan that reports only a monthly pool. It
+    # lands in `monthly`, never in `weekly`.
     snap = CodexProvider.parse(FIXTURE_MONTHLY)
     assert snap.ok is True
-    assert snap.monthly is None
+    assert snap.monthly == Quota(
+        used=5.0, limit=100.0, unit="%", reset_note="resets 02:42 on 2 Oct"
+    )
     assert snap.daily is None
     assert snap.weekly is None
     assert snap.client_info == "OpenAI Codex (v0.152.0)"
@@ -61,7 +66,7 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.monthly is None
 
 
-def test_parse_keeps_only_weekly_when_other_windows_are_present():
+def test_parse_keeps_weekly_and_monthly_when_other_windows_are_present():
     text = (
         "  5h limit:      [██████████░░░░░░░░░░] 55% left (resets soon)\n"
         "  Daily limit:   [██████████░░░░░░░░░░] 60% left (resets today)\n"
@@ -70,7 +75,7 @@ def test_parse_keeps_only_weekly_when_other_windows_are_present():
     )
     snap = CodexProvider.parse(text)
     assert snap.daily is None
-    assert snap.monthly is None
+    assert snap.monthly == Quota(used=10.0, limit=100.0, unit="%", reset_note="resets next month")
     assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%", reset_note="resets later")
 
 
@@ -104,9 +109,11 @@ def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch
     assert len(calls) == 1
     assert calls[0][1]["dialog_responses"] == _DIALOG_RESPONSES
     assert calls[0][1]["done_patterns"]
-    # Other rows must not end capture before the weekly quota arrives.
+    # Either subscription's row ends capture early; without it every poll
+    # burns the full _TOTAL_TIMEOUT. The 5h row must not end it.
     assert set(calls[0][1]["done_patterns"]) == {
         codex_module._WEEKLY_RE.pattern,
+        codex_module._MONTHLY_RE.pattern,
     }
 
 

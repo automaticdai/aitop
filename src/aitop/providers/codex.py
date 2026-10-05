@@ -30,10 +30,15 @@ _SEQ = [(4.5, "/status\r"), (9.0, "/quit\r")]
 # reaps the helper process and its PTY child.
 _TOTAL_TIMEOUT = 11.0
 
-# Only the weekly limit is displayed for Codex. A missing weekly row means
-# no quota data; other windows must not be substituted for it. Reset text
-# is captured verbatim, without timezone/date parsing.
+# Which "<Label> limit:" row /status renders depends on the subscription:
+# Plus/Pro accounts get a weekly row (tests/fixtures/codex_usage.txt), while
+# Free/Go accounts get only a monthly pool (tests/fixtures/codex_usage_monthly.txt).
+# Each is kept in its own field -- a monthly pool is never shown as weekly,
+# since that would misstate when it resets. The 5h/session window is not
+# displayed for Codex. Reset text is captured verbatim, without
+# timezone/date parsing.
 _WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
+_MONTHLY_RE = re.compile(r"Monthly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 # The header box of both the welcome screen and the /status panel carries the
 # CLI version verbatim ("OpenAI Codex (v0.148.0)") -- the single-line client
 # info for the card.
@@ -49,7 +54,7 @@ class CodexProvider:
                 ["codex"],
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
-                done_patterns=[_WEEKLY_RE.pattern],
+                done_patterns=[_WEEKLY_RE.pattern, _MONTHLY_RE.pattern],
                 dialog_responses=_DIALOG_RESPONSES,
             )
             return self.parse(text)
@@ -59,11 +64,13 @@ class CodexProvider:
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
+        monthly = _quota_from_pct_left(text, _MONTHLY_RE)
         version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "codex",
             ok=True,
             weekly=weekly,
+            monthly=monthly,
             client_info=version.group(0) if version else None,
             raw={"screen": text},
         )
