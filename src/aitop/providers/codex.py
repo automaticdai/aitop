@@ -34,9 +34,11 @@ _TOTAL_TIMEOUT = 11.0
 # Plus/Pro accounts get a weekly row (tests/fixtures/codex_usage.txt), while
 # Free/Go accounts get only a monthly pool (tests/fixtures/codex_usage_monthly.txt).
 # Each is kept in its own field -- a monthly pool is never shown as weekly,
-# since that would misstate when it resets. The 5h/session window is not
-# displayed for Codex. Reset text is captured verbatim, without
-# timezone/date parsing.
+# since that would misstate when it resets. Plans with a rolling 5h window
+# also render a "5h limit:" row; it goes into `daily`, which the cards label
+# "session" for Codex (render.daily_label). Reset text is captured verbatim,
+# without timezone/date parsing.
+_SESSION_RE = re.compile(r"5h limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 _WEEKLY_RE = re.compile(r"Weekly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 _MONTHLY_RE = re.compile(r"Monthly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?")
 # The header box of both the welcome screen and the /status panel carries the
@@ -63,12 +65,14 @@ class CodexProvider:
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
+        session = _quota_from_pct_left(text, _SESSION_RE)
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
         monthly = _quota_from_pct_left(text, _MONTHLY_RE)
         version = _CLIENT_INFO_RE.search(text)
         return UsageSnapshot(
             "codex",
             ok=True,
+            daily=session,
             weekly=weekly,
             monthly=monthly,
             client_info=version.group(0) if version else None,

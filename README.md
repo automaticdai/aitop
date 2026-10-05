@@ -62,7 +62,7 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | Provider | Required setup | Data source |
 |---|---|---|
 | Claude Code | `claude` on `PATH`, already logged in | CLI `/usage` |
-| Codex | `codex` on `PATH`, already logged in | CLI `/status` (weekly or monthly limit, depending on plan) |
+| Codex | `codex` on `PATH`, already logged in | CLI `/status` (5h, weekly or monthly limits, whichever the plan has) |
 | Antigravity | `agy` CLI on `PATH`, already logged in | CLI `/usage`, including both quota groups |
 | DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
 | GLM | API key in **Menu**, or `GLM_API_KEY`; choose Z.ai or BigModel | HTTPS Coding Plan quota API |

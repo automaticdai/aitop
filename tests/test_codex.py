@@ -66,17 +66,23 @@ def test_parse_missing_windows_returns_none_not_raise():
     assert snap.monthly is None
 
 
-def test_parse_keeps_weekly_and_monthly_when_other_windows_are_present():
+def test_parse_reads_5h_weekly_and_monthly_rows():
     text = (
         "  5h limit:      [██████████░░░░░░░░░░] 55% left (resets soon)\n"
-        "  Daily limit:   [██████████░░░░░░░░░░] 60% left (resets today)\n"
         "  Weekly limit:   [████████████████░░░░] 80% left (resets later)\n"
         "  Monthly limit:   [████████████████░░░░] 90% left (resets next month)\n"
     )
     snap = CodexProvider.parse(text)
-    assert snap.daily is None
+    assert snap.daily == Quota(used=45.0, limit=100.0, unit="%", reset_note="resets soon")
     assert snap.monthly == Quota(used=10.0, limit=100.0, unit="%", reset_note="resets next month")
     assert snap.weekly == Quota(used=20.0, limit=100.0, unit="%", reset_note="resets later")
+
+
+def test_parse_ignores_daily_limit_row():
+    # Only the rolling 5h window is the Codex session quota; a "Daily
+    # limit:" row is not read into it.
+    text = "  Daily limit:   [██████████░░░░░░░░░░] 60% left (resets today)\n"
+    assert CodexProvider.parse(text).daily is None
 
 
 def test_parse_reset_note_is_none_when_no_parenthetical_present():
