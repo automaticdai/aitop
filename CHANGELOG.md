@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.5.3 — 2026-10-05
+
+- Show Codex's 5-hour limit on plans that have one. The rolling `5h limit:` row from `codex /status` now appears as a **session** row above the weekly limit, in both the terminal and the browser. Plans without a 5h window are unchanged.
+
+Upgrade the package and restart aitop.
+
 ## v1.5.2 — 2026-10-05
 
 - Fix an empty Codex card on plans without a weekly limit. `codex /status` shows a different limit row depending on the subscription: Plus and Pro show a weekly limit, while Free and Go show only a monthly pool. aitop now reads both and shows each one as its own row, so a monthly pool is never labelled weekly. On those plans each Codex poll also finishes early again instead of running to the full timeout.
