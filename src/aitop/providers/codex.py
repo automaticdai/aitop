@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 from ..models import Quota, UsageSnapshot
@@ -46,22 +47,46 @@ _MONTHLY_RE = re.compile(r"Monthly limit:.*?(\d{1,3})%\s*left(?:\s*\(([^)]*)\))?
 # info for the card.
 _CLIENT_INFO_RE = re.compile(r"OpenAI Codex \(v[\d.]+\)")
 
+# codex-cli 0.161.0 attaches to a shared background server by default and, on
+# accounts without api_key_model_discovery, exits at startup with "Error:
+# Cannot use the shared background server ... rerun ... with --no-daemon".
+# Older CLIs reject the flag as an unknown argument, so it is passed only when
+# `codex --help` lists it. The probe result is cached and dropped after any
+# failed fetch, so a CLI upgraded while aitop runs is re-probed.
+_NO_DAEMON_FLAG = "--no-daemon"
+_HELP_TIMEOUT = 5.0
+_no_daemon_supported: bool | None = None
+
+# The tail of a failed screen becomes the card's error. Terminal query replies
+# can be echoed in front of a CLI error ("1u1uuError: ..."), so an "Error:"
+# line is cut at that word; otherwise the last few non-blank lines are used.
+_ERROR_RE = re.compile(r"Error:.*", re.DOTALL)
+_ERROR_TAIL_LINES = 3
+_ERROR_MAX_CHARS = 300
+
 
 class CodexProvider:
     name = "codex"
 
     async def fetch(self) -> UsageSnapshot:
+        global _no_daemon_supported
         try:
+            if _no_daemon_supported is None:
+                _no_daemon_supported = await _probe_no_daemon()
+            command = ["codex", _NO_DAEMON_FLAG] if _no_daemon_supported else ["codex"]
             text = await drive_screen_async(
-                ["codex"],
+                command,
                 _SEQ,
                 total_timeout=_TOTAL_TIMEOUT,
                 done_patterns=[_WEEKLY_RE.pattern, _MONTHLY_RE.pattern],
                 dialog_responses=_DIALOG_RESPONSES,
             )
-            return self.parse(text)
+            snap = self.parse(text)
         except Exception as exc:  # noqa: BLE001
-            return UsageSnapshot(self.name, ok=False, error=str(exc))
+            snap = UsageSnapshot(self.name, ok=False, error=str(exc))
+        if not snap.ok:
+            _no_daemon_supported = None
+        return snap
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
@@ -69,6 +94,14 @@ class CodexProvider:
         weekly = _quota_from_pct_left(text, _WEEKLY_RE)
         monthly = _quota_from_pct_left(text, _MONTHLY_RE)
         version = _CLIENT_INFO_RE.search(text)
+        # Neither a limit row nor the version banner means Codex never reached
+        # its TUI (a startup error, a crash): report that instead of an empty,
+        # healthy-looking card. A banner without rows stays ok -- the panel
+        # may simply not have painted inside the time budget.
+        if not (session or weekly or monthly or version):
+            return UsageSnapshot(
+                "codex", ok=False, error=_screen_error(text), raw={"screen": text}
+            )
         return UsageSnapshot(
             "codex",
             ok=True,
@@ -78,6 +111,39 @@ class CodexProvider:
             client_info=version.group(0) if version else None,
             raw={"screen": text},
         )
+
+
+async def _probe_no_daemon() -> bool:
+    """Whether the installed codex-cli accepts `--no-daemon`."""
+    proc = await asyncio.create_subprocess_exec(
+        "codex",
+        "--help",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), _HELP_TIMEOUT)
+    except BaseException:
+        proc.kill()
+        await proc.wait()
+        raise
+    return _NO_DAEMON_FLAG in out.decode(errors="replace")
+
+
+def _screen_error(text: str) -> str:
+    m = _ERROR_RE.search(text)
+    if m:
+        message = " ".join(m.group(0).split())
+    else:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        message = " ".join(lines[-_ERROR_TAIL_LINES:])
+    if not message:
+        return "codex produced no output"
+    if len(message) > _ERROR_MAX_CHARS:
+        message = message[: _ERROR_MAX_CHARS - 1] + "\u2026"
+    return message
+
 
 def _quota_from_pct_left(text: str, pattern: re.Pattern[str]) -> Quota | None:
     m = pattern.search(text)

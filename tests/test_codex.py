@@ -1,6 +1,8 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from aitop.models import Quota
 from aitop.providers import codex as codex_module
 from aitop.providers.codex import _DIALOG_RESPONSES, _SEQ, _TOTAL_TIMEOUT, CodexProvider
@@ -9,6 +11,24 @@ FIXTURE = (Path(__file__).parent / "fixtures" / "codex_usage.txt").read_text()
 FIXTURE_MONTHLY = (
     Path(__file__).parent / "fixtures" / "codex_usage_monthly.txt"
 ).read_text()
+FIXTURE_DAEMON_ERROR = (
+    Path(__file__).parent / "fixtures" / "codex_daemon_error.txt"
+).read_text()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_codex_help(monkeypatch):
+    # fetch() probes `codex --help` once per process; never run the real CLI
+    # here, and start every test with an empty probe cache.
+    probes = []
+
+    async def fake_probe():
+        probes.append(True)
+        return True
+
+    monkeypatch.setattr(codex_module, "_no_daemon_supported", None)
+    monkeypatch.setattr(codex_module, "_probe_no_daemon", fake_probe)
+    return probes
 
 
 def test_parse_real_status_screen():
@@ -54,16 +74,52 @@ def test_parse_captures_client_info_version_banner():
 
 
 def test_parse_client_info_none_when_no_banner():
-    snap = CodexProvider.parse("no rate limit data on this screen")
+    text = "  Weekly limit:   [████████████████░░░░] 80% left\n"
+    snap = CodexProvider.parse(text)
+    assert snap.ok is True
     assert snap.client_info is None
 
 
-def test_parse_missing_windows_returns_none_not_raise():
-    snap = CodexProvider.parse("no rate limit data on this screen")
+def test_parse_banner_without_rows_is_ok_and_empty():
+    # The TUI came up but the /status panel did not paint in time: that is
+    # an empty card, not a failure.
+    snap = CodexProvider.parse("  >_ OpenAI Codex (v0.161.0)\n\n/status\n")
     assert snap.ok is True
+    assert snap.client_info == "OpenAI Codex (v0.161.0)"
     assert snap.daily is None
     assert snap.weekly is None
     assert snap.monthly is None
+
+
+def test_parse_startup_error_screen_is_reported_not_empty():
+    # tests/fixtures/codex_daemon_error.txt is a real PTY capture from
+    # codex-cli 0.161.0 launched without --no-daemon. The echoed terminal
+    # replies ("1u1uu") in front of "Error:" are cut off.
+    snap = CodexProvider.parse(FIXTURE_DAEMON_ERROR)
+    assert snap.ok is False
+    assert snap.error.startswith("Error: Cannot use the shared background server")
+    assert "--no-daemon" in snap.error
+    assert "\n" not in snap.error
+    assert snap.raw == {"screen": FIXTURE_DAEMON_ERROR}
+
+
+def test_parse_screen_without_banner_or_rows_reports_its_tail():
+    text = "line one\n\nline two\nline three\nline four\n"
+    snap = CodexProvider.parse(text)
+    assert snap.ok is False
+    assert snap.error == "line two line three line four"
+
+
+def test_parse_blank_screen_reports_no_output():
+    snap = CodexProvider.parse("  \n\n")
+    assert snap.ok is False
+    assert snap.error == "codex produced no output"
+
+
+def test_parse_long_error_is_truncated():
+    snap = CodexProvider.parse("Error: " + "x" * 1000)
+    assert len(snap.error) == codex_module._ERROR_MAX_CHARS
+    assert snap.error.endswith("\u2026")
 
 
 def test_parse_reads_5h_weekly_and_monthly_rows():
@@ -107,12 +163,13 @@ def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch
     async def fake_drive_screen(*args, **kwargs):
         calls.append((args, kwargs))
         await asyncio.sleep(0)
-        return "fake screen"
+        return FIXTURE
 
     monkeypatch.setattr(codex_module, "drive_screen_async", fake_drive_screen)
     snap = asyncio.run(CodexProvider().fetch())
     assert snap.ok is True
     assert len(calls) == 1
+    assert calls[0][0][0] == ["codex", "--no-daemon"]
     assert calls[0][1]["dialog_responses"] == _DIALOG_RESPONSES
     assert calls[0][1]["done_patterns"]
     # Either subscription's row ends capture early; without it every poll
@@ -121,6 +178,60 @@ def test_fetch_uses_cancellable_helper_with_dialog_and_done_patterns(monkeypatch
         codex_module._WEEKLY_RE.pattern,
         codex_module._MONTHLY_RE.pattern,
     }
+
+
+def _fake_drive(screen, calls):
+    async def fake_drive_screen(command, *args, **kwargs):
+        calls.append(command)
+        return screen
+
+    return fake_drive_screen
+
+
+def test_fetch_omits_no_daemon_when_cli_does_not_list_it(monkeypatch):
+    # Older codex-cli releases reject --no-daemon as an unknown argument.
+    async def old_cli():
+        return False
+
+    calls = []
+    monkeypatch.setattr(codex_module, "_probe_no_daemon", old_cli)
+    monkeypatch.setattr(codex_module, "drive_screen_async", _fake_drive(FIXTURE, calls))
+    snap = asyncio.run(CodexProvider().fetch())
+    assert snap.ok is True
+    assert calls == [["codex"]]
+
+
+def test_probe_is_cached_across_successful_fetches(monkeypatch, _no_real_codex_help):
+    calls = []
+    monkeypatch.setattr(codex_module, "drive_screen_async", _fake_drive(FIXTURE, calls))
+    provider = CodexProvider()
+    asyncio.run(provider.fetch())
+    asyncio.run(provider.fetch())
+    assert len(calls) == 2
+    assert len(_no_real_codex_help) == 1
+
+
+def test_failed_fetch_reprobes_on_the_next_poll(monkeypatch, _no_real_codex_help):
+    # A CLI upgraded (or downgraded) while aitop runs is picked up again
+    # after the first failure instead of failing until restart.
+    calls = []
+    monkeypatch.setattr(
+        codex_module, "drive_screen_async", _fake_drive(FIXTURE_DAEMON_ERROR, calls)
+    )
+    provider = CodexProvider()
+    assert asyncio.run(provider.fetch()).ok is False
+    asyncio.run(provider.fetch())
+    assert len(_no_real_codex_help) == 2
+
+
+def test_probe_failure_is_reported_not_raised(monkeypatch):
+    async def missing_cli():
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(codex_module, "_probe_no_daemon", missing_cli)
+    snap = asyncio.run(CodexProvider().fetch())
+    assert snap.ok is False
+    assert "codex" in snap.error
 
 
 def test_update_dialog_is_conditional_not_a_blind_key_sequence():
