@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.5.4 — 2026-10-08
+
+- Fix an empty Codex card with codex-cli 0.161.0. That release connects to a shared background server by default, and on some accounts it exits at startup asking to be rerun with `--no-daemon`. aitop now passes `--no-daemon` when the installed Codex CLI supports it, and leaves it off for older versions that don't.
+- Show Codex startup failures as errors. When Codex exits before it shows its screen, the card now displays Codex's own error message instead of looking healthy but empty.
+
+Upgrade the package and restart aitop.
+
 ## v1.5.3 — 2026-10-05
 
 - Show Codex's 5-hour limit on plans that have one. The rolling `5h limit:` row from `codex /status` now appears as a **session** row above the weekly limit, in both the terminal and the browser. Plans without a 5h window are unchanged.
