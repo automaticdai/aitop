@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.6 — 2026-10-10
 
 - Add Grok Build monitoring. The card shows the subscription's weekly limit (or monthly, on plans that have one) and its reset countdown, read from the `/usage` screen of `grok dashboard`, which keeps polls out of Grok's session history. Grok is opt-in.
 - Reset countdowns also understand the `Resets: October 15, 01:00` form.
