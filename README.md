@@ -1,6 +1,6 @@
 # aitop
 
-Monitor **Claude Code, Codex, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, MiniMax, OpenAI Platform, and Claude Platform** from your terminal or browser. See remaining quota, reset countdowns, account balances, and API spend in one place.
+Monitor **Claude Code, Codex, Grok Build, GitHub Copilot, Antigravity (agy), DeepSeek, GLM, OpenRouter, Kimi, MiniMax, OpenAI Platform, and Claude Platform** from your terminal or browser. See remaining quota, reset countdowns, account balances, and API spend in one place.
 
 See the [v1.2.1 release notes](CHANGELOG.md) for highlights and upgrade instructions.
 
@@ -64,6 +64,7 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 | Claude Code | `claude` on `PATH`, already logged in | CLI `/usage` |
 | Codex | `codex` on `PATH`, already logged in | CLI `/status` (5h, weekly or monthly limits, whichever the plan has) |
 | Antigravity | `agy` CLI on `PATH`, already logged in | CLI `/usage`, including both quota groups |
+| Grok | `grok` (Grok Build) on `PATH`, already logged in | CLI dashboard `/usage` (weekly or monthly limit) |
 | DeepSeek | API key saved through **Menu**, or `DEEPSEEK_API_KEY` | HTTPS balance API |
 | GLM | API key in **Menu**, or `GLM_API_KEY`; choose Z.ai or BigModel | HTTPS Coding Plan quota API |
 | GitHub Copilot | `gh auth login`, or `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | HTTPS account quotas |
@@ -76,6 +77,8 @@ To run automatically when WSL starts, follow the [service setup guide](docs/wsl.
 Run each CLI once to log in before starting aitop. The `agy` CLI is required for Antigravity; the desktop app alone is insufficient. DeepSeek, OpenRouter, and Kimi show an account balance rather than a quota bar; OpenAI Platform and Claude Platform show spend alone.
 
 Enable **GitHub Copilot** under **Menu → Providers** after signing in to GitHub on the machine running aitop. It is off by default to preserve existing layouts. For the TUI, set `[providers.copilot] enabled = true` and use an adaptive layout or leave a grid cell for it. Copilot shows monthly premium-request or AI-credit, chat, and completion pools when available; unlimited pools are labelled explicitly. The adapter uses the internal [entitlement API used by VS Code](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/services/chat/common/chatEntitlementService.ts), which may change. It reads quotas without making model requests or saving GitHub credentials in aitop's config. Environment tokens take precedence over the GitHub CLI login, in the order listed above.
+
+Enable **Grok** under **Menu → Providers** after installing Grok Build (`curl -fsSL https://x.ai/cli/install.sh | bash`) and running `grok login`; it is off by default. The card shows the subscription's weekly limit (or monthly, on plans that have one) with its reset countdown, and names the plan under the logo. aitop opens `grok dashboard` and reads the **Usage limit** tab of its `/usage` screen, so polling makes no model requests and, unlike a chat session, leaves no session history behind. A team account whose limits are managed by the team, or a pay-as-you-go-only account, reports that rather than a bar. The xAI API (pay-as-you-go keys) is a separate product and is not read.
 
 Enable **GLM** under **Menu → Providers**, select your account's region, and enter its API key. Changes save automatically. GLM is off by default. GLM uses the [official usage plugin's quota endpoint](https://github.com/zai-org/zai-coding-plugins/blob/main/plugins/glm-plan-usage/skills/usage-query-skill/scripts/query-usage.mjs) to show Coding Plan session, weekly, and MCP tool quotas when returned. The official usage plugin supports personal Coding Plans. A pay-as-you-go key alone does not provide these plan quotas. This integration only reads usage; it does not make model requests.
 

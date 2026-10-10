@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add Grok Build monitoring. The card shows the subscription's weekly limit (or monthly, on plans that have one) and its reset countdown, read from the `/usage` screen of `grok dashboard`, which keeps polls out of Grok's session history. Grok is opt-in.
+- Reset countdowns also understand the `Resets: October 15, 01:00` form.
+
+Upgrade the package, restart aitop, and enable Grok under **Menu → Providers**.
+
 ## v1.5.4 — 2026-10-08
 
 - Fix an empty Codex card with codex-cli 0.161.0. That release connects to a shared background server by default, and on some accounts it exits at startup asking to be rerun with `--no-daemon`. aitop now passes `--no-daemon` when the installed Codex CLI supports it, and leaves it off for older versions that don't.

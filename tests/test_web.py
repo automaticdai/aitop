@@ -788,7 +788,7 @@ def test_group_toggle_autosaves_and_survives_menu_close():
     assert json.loads(cancelled["writes"][0]["body"])["show_claude_gpt"] is True
 
 
-@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax"])
+@pytest.mark.parametrize("provider", ["claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax", "grok"])
 def test_provider_logos_are_served_locally_and_in_loading_cards(provider):
     client = TestClient(build_app(SnapshotStore()))
     response = client.get(f"/logos/{provider}.svg")

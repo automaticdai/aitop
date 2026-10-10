@@ -23,3 +23,7 @@ anthropic.svg: packages/static-svg/icons/anthropic.svg
 Downloaded 2026-09-09 from the same MIT-licensed collection. Both are the
 monochrome marks -- OpenAI publishes no colored one, and the Anthropic mark
 keeps the platform card distinct from the Claude Code card's colored logo.
+
+grok.svg: packages/static-svg/icons/grok.svg (@lobehub/icons-static-svg 1.71.0)
+Downloaded 2026-10-10 from the same MIT-licensed collection. Monochrome, like
+xAI's own mark, so it is inverted on the dark theme.

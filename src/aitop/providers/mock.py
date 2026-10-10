@@ -36,6 +36,9 @@ class MockProvider:
                                         Spend("this month", 31.02, "USD")])
         if self.name == "gemini":
             return UsageSnapshot(self.name, groups=_MOCK_GEMINI_GROUPS)
+        if self.name == "grok":
+            return UsageSnapshot(self.name, client_info="Grok Build (SuperGrok)",
+                                 weekly=Quota(22, 100, "%", "Reset in 4d 2h 0m"))
         if self.name == "copilot":
             return UsageSnapshot(self.name, client_info="GitHub Copilot", groups=[
                 QuotaGroup("Premium requests", monthly=Quota(25, 100, "%", "Reset in 12d 6h 0m")),

@@ -45,6 +45,8 @@ def test_session_format_uses_total_hours(note, expected):
     ("Resets 1am (UTC)", "2026-09-05T23:00:00+00:00", "Reset in 0d 2h 0m"),
     ("Resets Jan 1, 5am (UTC)", "2026-12-31T05:00:00+00:00", "Reset in 1d 0h 0m"),
     ("Resets Mar 29, 5am (Europe/London)", "2026-03-28T05:00:00+00:00", "Reset in 0d 23h 0m"),
+    # Grok Build's modal: a colon, the month in full, and a 24-hour clock.
+    ("Resets: October 15, 01:00 (Europe/London)", "2026-10-10T22:00:00+00:00", "Reset in 4d 2h 0m"),
 ])
 def test_clock_dates_timezone_rollover_and_dst(note, reference, expected):
     now = stamp(reference)

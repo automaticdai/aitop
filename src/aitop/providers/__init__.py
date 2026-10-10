@@ -13,6 +13,7 @@ from .mock import MockProvider
 from .openai import OpenAIProvider
 from .openrouter import OpenRouterProvider
 from .glm import GLMProvider
+from .grok import GrokProvider
 
 
 def build_providers(config: Config, mock: bool = False) -> list:
@@ -42,6 +43,8 @@ def build_providers(config: Config, mock: bool = False) -> list:
             provider = GeminiProvider()
         elif name == "claude":
             provider = ClaudeProvider()
+        elif name == "grok":
+            provider = GrokProvider()
         else:  # unreachable: place_providers only emits PROVIDER_NAMES
             continue
         # Wire the per-provider timeout from config so Poller enforces it per

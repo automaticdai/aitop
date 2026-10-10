@@ -16,7 +16,7 @@ import tomlkit
 CWD_CONFIG_PATH = Path("config.toml")
 USER_CONFIG_PATH = Path.home() / ".config" / "aitop" / "config.toml"
 PROVIDER_NAMES = ("claude", "codex", "gemini", "deepseek", "copilot", "glm", "openrouter", "kimi", "minimax",
-                  "openai", "anthropic")
+                  "openai", "anthropic", "grok")
 
 API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter", "kimi", "minimax", "openai", "anthropic")
 # Providers whose credential has to be an *admin* key: the vendor cost APIs
@@ -25,7 +25,7 @@ API_KEY_PROVIDERS = ("deepseek", "glm", "openrouter", "kimi", "minimax", "openai
 ADMIN_KEY_PROVIDERS = ("openai", "anthropic")
 # Providers that need credentials or a paid plan aitop can't assume: off
 # unless the user turns them on, so a fresh install shows no broken cards.
-_OPT_IN = ("copilot", "glm", "openrouter", "kimi", "minimax", "openai", "anthropic")
+_OPT_IN = ("copilot", "glm", "openrouter", "kimi", "minimax", "openai", "anthropic", "grok")
 REGIONAL_PROVIDERS = ("glm", "kimi", "minimax")
 
 
@@ -317,6 +317,8 @@ def default_config_toml() -> str:
             lines.append('region = "global" # "global" or "china"')
         if name == "copilot":
             lines.append("# Enable after gh auth login, or set COPILOT_GITHUB_TOKEN.")
+        if name == "grok":
+            lines.append("# Enable after installing Grok Build and running grok login.")
         if name in placement:
             r, c = placement[name]
             lines.append(f"position = [{r}, {c}]")

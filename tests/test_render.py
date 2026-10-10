@@ -53,6 +53,7 @@ def test_display_name_maps_internal_keys_to_shown_text():
         "minimax": "MiniMax",
         "openai": "OpenAI Platform",
         "anthropic": "Claude Platform",
+        "grok": "Grok",
     }
     # Two companies own two cards each, so the shown text is what tells them
     # apart: the CLI card names the tool, the API card names the platform.

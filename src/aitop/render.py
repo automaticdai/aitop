@@ -46,6 +46,7 @@ DISPLAY_NAME = {
     "minimax": "MiniMax",
     "openai": "OpenAI Platform",
     "anthropic": "Claude Platform",
+    "grok": "Grok",
 }
 
 # A minimal 4-col x 5-row block-letter font, used to spell out the company
@@ -111,6 +112,7 @@ LOGOS = {
     # "OpenAI Platform" from "Codex" and "Claude Platform" from "Claude Code".
     "openai": f"[#10A37F]{_text_art('OPENAI')}[/]",
     "anthropic": f"[#D97757]{_text_art('ANTHROPIC')}[/]",
+    "grok": f"[#A1A1AA]{_text_art('XAI')}[/]",  # xAI's mark is monochrome; grey reads on light and dark
 }
 
 # Drawn width of each wordmark: 4 columns per glyph plus a separating space
@@ -130,6 +132,7 @@ LOGO_WIDTH = {
     "minimax": 5 * len("MINIMAX") - 1,
     "openai": 5 * len("OPENAI") - 1,
     "anthropic": 5 * len("ANTHROPIC") - 1,
+    "grok": 5 * len("XAI") - 1,
 }
 
 

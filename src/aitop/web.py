@@ -397,7 +397,7 @@ INDEX_HTML = """<!doctype html>
   .provider-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
   .provider-logo { display: block; width: 32px; height: 32px; flex-shrink: 0; object-fit: contain; }
   @media (prefers-color-scheme: dark) { .provider-logo.codex, .provider-logo.copilot, .provider-logo.glm, .provider-logo.openrouter, .provider-logo.kimi,
-    .provider-logo.openai, .provider-logo.anthropic { filter: invert(1); } }
+    .provider-logo.openai, .provider-logo.anthropic, .provider-logo.grok { filter: invert(1); } }
   /* Client-info caption at the top of the card body -- same placement and
      muted treatment as the TUI's line under the logo. */
   .client-info { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
@@ -572,6 +572,9 @@ INDEX_HTML = """<!doctype html>
           </div>
           <div class="provider-setting" data-provider="codex">
             <div id="provider-toggle-codex"></div>
+          </div>
+          <div class="provider-setting" data-provider="grok">
+            <div id="provider-toggle-grok"></div>
           </div>
           <div class="provider-setting" data-provider="copilot">
             <div id="provider-toggle-copilot"></div>

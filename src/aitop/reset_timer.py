@@ -19,8 +19,10 @@ _MONTHS = {name: i for i, name in enumerate(
     ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1
 )}
 _CLOCK = r"(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)?"
+# Also Grok Build's "Resets: October 15, 01:00": a colon after the verb and the
+# month spelled out. Only its first three letters are looked up.
 _CLAUDE = re.compile(
-    r"resets?\s+(?:(?P<month>[a-z]{3})\s+(?P<day>\d{1,2}),\s*)?" + _CLOCK, re.I,
+    r"resets?:?\s+(?:(?P<month>[a-z]{3})[a-z]{0,6}\s+(?P<day>\d{1,2}),\s*)?" + _CLOCK, re.I,
 )
 _CODEX = re.compile(
     r"resets?\s+" + _CLOCK + r"\s+on\s+(?P<day>\d{1,2})\s+(?P<month>[a-z]{3})", re.I,
