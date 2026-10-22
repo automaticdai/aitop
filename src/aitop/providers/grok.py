@@ -12,8 +12,12 @@ from .pty_driver import DialogResponse, drive_screen_async
 # docs/user-guide/04-slash-commands.md), so polling it leaves nothing behind.
 _COMMAND = ["grok", "dashboard"]
 
-# Both keystrokes are gated on screen text, so nothing is typed before the
+# Every keystroke is gated on screen text, so nothing is typed before the
 # dashboard can take it and no key lands in an unexpected prompt:
+#   - grok 1.0.67 asks "Do you trust the contents of this directory?" before
+#     the dashboard paints. drive_screen_async always launches in a private
+#     app-owned workspace, so "y" (Yes, proceed) cannot approve the user's
+#     repository, as with the Claude and Gemini trust dialogs.
 #   - "/usage" goes in once the dashboard header has painted.
 #   - The Enter that follows it is swallowed by the slash-command popup
 #     ("show  View usage" / "manage  Manage billing"), as with Codex; a
@@ -21,6 +25,7 @@ _COMMAND = ["grok", "dashboard"]
 # The data-sharing consent banner is deliberately left unanswered -- it does
 # not block input, and the choice is the user's to make.
 _DIALOG_RESPONSES: list[DialogResponse] = [
+    (("Do you trust the contents of this directory?", "Yes, proceed"), "y"),
     (("New Agent",), "/usage\r"),
     (("View usage", "Manage billing"), "\r"),
 ]

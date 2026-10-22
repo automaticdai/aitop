@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix the Grok card with Grok Build 1.0.67, which asks whether to trust the working directory before the dashboard opens. aitop now accepts that prompt for its own private workspace (never your repository), as it already does for Claude and Gemini, instead of ending the poll on it.
+
 ## v1.6 — 2026-10-10
 
 - Add Grok Build monitoring. The card shows the subscription's weekly limit (or monthly, on plans that have one) and its reset countdown, read from the `/usage` screen of `grok dashboard`, which keeps polls out of Grok's session history. Grok is opt-in.

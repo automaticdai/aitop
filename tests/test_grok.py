@@ -115,3 +115,15 @@ def test_config_and_build_provider(tmp_path):
     provider = next(p for p in build_providers(load_config(path)) if p.name == "grok")
     assert isinstance(provider, GrokProvider)
     assert provider.timeout_s == 11
+
+
+def test_trust_prompt_is_answered_only_on_its_own_screen():
+    # grok 1.0.67 asks to trust the (private, app-owned) workspace before the
+    # dashboard paints; left unanswered, the poll ends on the prompt.
+    prompt = ("Do you trust the contents of this directory?\n"
+              "  Yes, proceed                 y\n  No, quit                     n\n")
+    answered = [keys for markers, keys in _DIALOG_RESPONSES
+                if all(m.casefold() in prompt.casefold() for m in markers)]
+    assert answered == ["y"]
+    assert not any(keys == "y" for markers, keys in _DIALOG_RESPONSES
+                   if all(m.casefold() in FIXTURE.casefold() for m in markers))
