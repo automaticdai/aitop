@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## v1.6.1 — 2026-10-22
 
 - Fix the Grok card with Grok Build 1.0.67, which asks whether to trust the working directory before the dashboard opens. aitop now accepts that prompt for its own private workspace (never your repository), as it already does for Claude and Gemini, instead of ending the poll on it.
+
+Upgrade the package and restart aitop.
 
 ## v1.6 — 2026-10-10
 
