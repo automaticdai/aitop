@@ -425,7 +425,9 @@ class AitopApp(App):
         # Poller._run_round() ignores this if a round is already in flight, so
         # holding `r` can't stack up concurrent CLI spawns.
         if self.poller is not None:
-            self.run_worker(self.poller.run_once())
+            # force: `r` is an explicit request for fresh numbers, so it also
+            # fetches a provider that's inside its own slower poll interval.
+            self.run_worker(self.poller.run_once(force=True))
 
     def action_web_status(self) -> None:
         if self.web_server is None:

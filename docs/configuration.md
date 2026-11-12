@@ -25,6 +25,7 @@ columns = 2
 enabled = true
 position = [1, 1]
 timeout_s = 15
+refresh_interval_s = 180
 
 [providers.codex]
 position = [1, 2]
@@ -100,6 +101,7 @@ columns = 2
   - `region` — GLM, Kimi, and MiniMax: `"global"` (default) or `"china"`. GLM selects `api.z.ai` or `open.bigmodel.cn`; Kimi selects `api.moonshot.ai` or `api.moonshot.cn` and its balance currency (USD or CNY); MiniMax selects `www.minimax.io` or `www.minimaxi.com`. Kimi and MiniMax keys are issued per platform and return 401 against the other region. GLM also falls back to `ZAI_API_KEY` for global accounts or `ZHIPU_API_KEY` for China accounts. Region controls save automatically in the Menu and are disabled while the provider is off.
   - Copilot authentication uses `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, then `GITHUB_TOKEN`, or falls back to `gh auth token --hostname github.com`. For a background service, authenticate `gh` as the service user or put the environment token in the service environment. The Copilot CLI is not required. No GitHub token is exposed through the dashboard or stored in aitop's config.
   - `position = [row, col]` — where to place the provider, **1-based with row first** (so `[1, 1]` is the top-left cell, and `[1, 2]` is top-right in a 2×2 grid). `[-1, -1]` (or any coordinate with a row/column below 1 or beyond the grid) turns the provider off entirely — it's neither shown nor polled. A provider with no `position` at all auto-fills the next free cell in row-major order, following `provider_order`. Defaults to unset (auto-fill).
+  - `refresh_interval_s` — poll this provider at most this often, in seconds. It can only slow a provider down relative to the top-level `refresh_interval_s`: the provider sits out the rounds that fall inside its own interval and its card keeps the last values. Unset for most providers (polled every round). **Claude defaults to `180`**: polled every 30 seconds, Claude Code's usage lookup gets rate-limited, after which its `/usage` screen — in aitop and in your own Claude Code sessions on the same login — is drawn without the per-model weekly bars (e.g. Fable) for five minutes at a time. Set `0` to poll every round. A failed fetch is retried on the next round, and pressing `r` in the TUI refreshes every provider regardless.
   - `timeout_s` — per-provider fetch timeout in seconds: how long one provider's fetch may run before it's reported as timed out. Defaults to `15`. PTY adapters also cap normal captures at about 11 seconds; a lower configured timeout cancels and cleans up the helper and CLI child immediately.
 - `[web]` — the optional web view (off by default). When enabled, `aitop` also serves a live web page and JSON endpoint.
   - `enabled` — whether to start the web server. Defaults to `false`. `--web` / `--no-web` on the command line override this.

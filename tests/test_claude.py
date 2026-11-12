@@ -4,7 +4,9 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from aitop.models import Quota
+import pytest
+
+from aitop.models import Quota, QuotaGroup
 from aitop.providers import claude as claude_module
 from aitop.providers.claude import (
     _CMD,
@@ -17,6 +19,17 @@ from aitop.providers.claude import (
 )
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "claude_usage.txt").read_text()
+FABLE_FIXTURE = (Path(__file__).parent / "fixtures" / "claude_usage_fable.txt").read_text()
+
+
+@pytest.fixture(autouse=True)
+def hold_file(monkeypatch, tmp_path):
+    # The per-model hold is a file (it has to outlive provider instances and
+    # be shared between aitop processes); give every test its own, empty one
+    # so nothing touches -- or leaks in from -- the real user cache.
+    path = tmp_path / "claude_model_limits.json"
+    monkeypatch.setattr(claude_module, "_hold_path", lambda: path)
+    return path
 
 
 def test_parse_real_usage_screen():
@@ -166,6 +179,226 @@ def test_parse_does_not_match_per_model_weekly_variant():
     )
     snap = ClaudeProvider.parse(text)
     assert snap.weekly is None
+    # ...and it is reported as its own labelled group instead of dropped.
+    assert snap.groups == [
+        QuotaGroup("Opus", weekly=Quota(99.0, 100.0, "%", "Resets Aug 25, 5am (Europe/London)"))
+    ]
+
+
+def test_parse_fable_fixture():
+    # tests/fixtures/claude_usage_fable.txt is a real `/usage` capture
+    # (Claude Code v2.1.322, Claude Team) that renders a per-model "Current
+    # week (Fable)" bar under the aggregate "(all models)" one.
+    snap = ClaudeProvider.parse(FABLE_FIXTURE)
+    assert snap.ok
+    assert snap.daily is not None and snap.daily.used == 4.0
+    assert snap.weekly == Quota(33.0, 100.0, "%", "Resets Nov 17, 7:59am (Europe/London)")
+    assert snap.groups == [
+        QuotaGroup("Fable", weekly=Quota(64.0, 100.0, "%", "Resets Nov 17, 7:59am (Europe/London)"))
+    ]
+    assert snap.client_info == "Claude Code v2.1.322"
+
+
+def test_real_fixture_has_no_groups():
+    # A panel with no per-model row must leave groups unset (None, not []),
+    # so the card renders exactly as it did before.
+    assert ClaudeProvider.parse(FIXTURE).groups is None
+
+
+def test_two_per_model_rows_in_screen_order():
+    text = (
+        "  Current week (all models)\n"
+        "  ██ 10% used\n"
+        "  Resets Nov 17, 8am (Europe/London)\n"
+        "\n"
+        "  Current week (Fable)\n"
+        "  ████ 64% used\n"
+        "  Resets Nov 17, 8am (Europe/London)\n"
+        "\n"
+        "  Current week (Opus)\n"
+        "  ███ 40% used\n"
+        "  Resets Nov 18, 9am (Europe/London)\n"
+    )
+    snap = ClaudeProvider.parse(text)
+    assert snap.weekly.used == 10.0
+    assert [(g.label, g.weekly.used, g.weekly.reset_note) for g in snap.groups] == [
+        ("Fable", 64.0, "Resets Nov 17, 8am (Europe/London)"),
+        ("Opus", 40.0, "Resets Nov 18, 9am (Europe/London)"),
+    ]
+    assert all(g.daily is None and g.monthly is None for g in snap.groups)
+
+
+def test_per_model_row_without_reset_does_not_borrow():
+    # No blank line between the blocks: the Fable block must still end at the
+    # next "Current ..." header rather than claim Opus's reset line.
+    text = (
+        "  Current week (Fable)\n"
+        "  ████ 64% used\n"
+        "  Current week (Opus)\n"
+        "  ███ 40% used\n"
+        "  Resets Nov 18, 9am (Europe/London)\n"
+    )
+    snap = ClaudeProvider.parse(text)
+    assert snap.groups[0] == QuotaGroup("Fable", weekly=Quota(64.0, 100.0, "%", None))
+    assert snap.groups[1].weekly.reset_note == "Resets Nov 18, 9am (Europe/London)"
+
+
+def test_per_model_header_without_bar_yields_no_group():
+    # Header painted, bar not (truncated capture): fail closed -- no group
+    # and no borrowed number from the block after it.
+    text = (
+        "  Current week (Fable)\n"
+        "\n"
+        "  Current week (all models)\n"
+        "  ██ 10% used\n"
+    )
+    snap = ClaudeProvider.parse(text)
+    assert snap.groups is None
+    assert snap.weekly.used == 10.0
+
+
+def _fetch_screens(monkeypatch, screens, clock):
+    """Run one fetch per screen on a single provider, at clock[0] seconds."""
+    it = iter(screens)
+
+    async def fake(*args, **kwargs):
+        return next(it)
+
+    monkeypatch.setattr(claude_module, "drive_screen_async", fake)
+    monkeypatch.setattr(claude_module, "_now", lambda: clock[0])
+
+    def fetch(at):
+        clock[0] = at
+        # A new provider per fetch, exactly as Poller does it: its
+        # provider_factory rebuilds every provider at the start of each round,
+        # so the hold must not live on the instance.
+        return asyncio.run(ClaudeProvider().fetch())
+
+    return fetch
+
+
+# The same panel as the Fable fixture, as the CLI serves it when polled
+# often: identical except the per-model block is simply not rendered.
+_FABLE_ROW_MISSING = re.sub(r"  Current week \(Fable\)\n.*\n.*\n\n", "", FABLE_FIXTURE)
+
+
+def test_missing_fable_row_fixture_really_lacks_it():
+    snap = ClaudeProvider.parse(_FABLE_ROW_MISSING)
+    assert snap.groups is None
+    assert snap.weekly.used == 33.0
+
+
+def test_fetch_holds_per_model_groups_when_row_is_intermittently_missing(monkeypatch):
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, _FABLE_ROW_MISSING, _FABLE_ROW_MISSING], [0.0])
+    fable = [QuotaGroup("Fable", weekly=Quota(64.0, 100.0, "%", "Resets Nov 17, 7:59am (Europe/London)"))]
+    assert fetch(0.0).groups == fable
+    held = fetch(30.0)
+    assert held.groups == fable
+    assert held.weekly.used == 33.0  # everything else is from the new capture
+    assert fetch(claude_module._GROUP_HOLD_S - 1).groups == fable
+
+
+def test_fetch_drops_held_groups_after_the_hold_expires(monkeypatch):
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, _FABLE_ROW_MISSING, _FABLE_ROW_MISSING], [0.0])
+    assert fetch(0.0).groups is not None
+    assert fetch(claude_module._GROUP_HOLD_S).groups is None
+    # ...and stays gone rather than resurfacing on a later poll.
+    assert fetch(claude_module._GROUP_HOLD_S + 30).groups is None
+
+
+def test_fetch_hold_is_refreshed_by_a_newer_sighting(monkeypatch):
+    newer = FABLE_FIXTURE.replace("64% used", "70% used")
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, newer, _FABLE_ROW_MISSING], [0.0])
+    fetch(0.0)
+    fetch(1000.0)
+    snap = fetch(1000.0 + claude_module._GROUP_HOLD_S - 1)
+    assert snap.groups[0].weekly.used == 70.0
+
+
+def test_fetch_does_not_hold_groups_onto_a_screen_without_the_weekly_bar(monkeypatch):
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, "garbage, no usage panel"], [0.0])
+    fetch(0.0)
+    assert fetch(30.0).groups is None
+
+
+def test_fetch_without_any_per_model_row_never_has_groups(monkeypatch):
+    fetch = _fetch_screens(monkeypatch, [FIXTURE, FIXTURE], [0.0])
+    assert fetch(0.0).groups is None
+    assert fetch(30.0).groups is None
+
+
+def test_hold_is_shared_through_the_file_and_survives_a_restart(monkeypatch, hold_file):
+    # Nothing in memory carries the hold: after one sighting, the file alone
+    # is enough for a later fetch -- another aitop process, or this one after
+    # a restart -- to show the group.
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, _FABLE_ROW_MISSING], [0.0])
+    fetch(0.0)
+    saved = hold_file.read_text()
+    hold_file.unlink()
+    hold_file.write_text(saved)
+    assert [g.label for g in fetch(30.0).groups] == ["Fable"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["", "not json", "[]", '{"seen_at": "soon", "groups": []}', '{"seen_at": 0, "groups": [{"label": "Fable"}]}'],
+)
+def test_corrupt_hold_file_means_no_hold_not_a_failed_poll(monkeypatch, hold_file, content):
+    hold_file.write_text(content)
+    fetch = _fetch_screens(monkeypatch, [_FABLE_ROW_MISSING], [0.0])
+    snap = fetch(0.0)
+    assert snap.ok and snap.weekly.used == 33.0
+    assert snap.groups is None
+
+
+def test_unwritable_hold_file_does_not_fail_the_poll(monkeypatch, tmp_path):
+    monkeypatch.setattr(claude_module, "_hold_path", lambda: tmp_path / "missing-dir" / "x.json")
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, _FABLE_ROW_MISSING], [0.0])
+    assert [g.label for g in fetch(0.0).groups] == ["Fable"]
+    assert fetch(30.0).groups is None
+
+
+def test_hold_file_from_the_future_is_ignored(monkeypatch):
+    fetch = _fetch_screens(monkeypatch, [FABLE_FIXTURE, _FABLE_ROW_MISSING], [0.0])
+    fetch(5000.0)
+    assert fetch(100.0).groups is None  # clock moved backwards
+
+
+def test_hold_survives_the_pollers_per_round_provider_rebuild(monkeypatch):
+    # End to end through the real Poller + build_providers wiring, which is
+    # where an instance-level hold silently did nothing.
+    from aitop.config import Config
+    from aitop.providers import build_providers
+    from aitop.scheduler import Poller
+
+    screens = iter([FABLE_FIXTURE, _FABLE_ROW_MISSING])
+
+    async def fake(*args, **kwargs):
+        return next(screens)
+
+    monkeypatch.setattr(claude_module, "drive_screen_async", fake)
+    config = Config.defaults()
+
+    def only_claude():
+        return [p for p in build_providers(config) if p.name == "claude"]
+
+    assert only_claude(), "claude must be on in the default layout for this test"
+    seen = []
+    clock = iter([0.0, 1000.0, 2000.0, 3000.0])  # past Claude's own poll interval each round
+    poller = Poller(
+        providers=only_claude(),
+        interval_s=30.0,
+        on_result=seen.append,
+        provider_factory=only_claude,
+        clock=lambda: next(clock),
+    )
+
+    async def two_rounds():
+        await poller.run_once()
+        await poller.run_once()
+
+    asyncio.run(two_rounds())
+    assert [[g.label for g in (s.groups or [])] for s in seen] == [["Fable"], ["Fable"]]
 
 
 def test_fetch_never_raises_on_pty_failure(monkeypatch):

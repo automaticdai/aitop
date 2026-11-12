@@ -1,0 +1,99 @@
+ ▐▛███▛█   Claude Code v2.1.322
+▝▜██████▀  Fable 5.2 · Claude Team
+ ▝▝   ▝▝   ~/.cache/aitop/provider-workspace
+
+
+❯ /usage
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Settings  Status   Config   Usage   Stats
+
+  Session
+
+  Total cost:            $0.0000
+  Total duration (API):  0s
+  Total duration (wall): 4s
+  Total code changes:    0 lines added, 0 lines removed
+  Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+
+
+  Plugin skill-listing footprint
+  What each plugin's skill descriptions add to the system prompt (cached input after the first turn). Agents and MCP
+  tools not yet counted.
+
+  ralph-loop                  3 skills · ~60 tok/turn
+  feature-dev                 1 skill · ~35 tok/turn
+  claude-md-management        1 skill · ~30 tok/turn
+  agent-sdk-dev               1 skill · ~27 tok/turn
+  code-review                 1 skill · ~18 tok/turn
+
+  Total                       ~171 tok/turn
+
+  Current session
+  ██                                                 4% used
+  Resets 11:29pm (Europe/London)
+
+  Current week (all models)
+  ████████████████▌                                  33% used
+  Resets Nov 17, 7:59am (Europe/London)
+
+  Current week (Fable)
+  ████████████████████████████████                   64% used
+  Resets Nov 17, 7:59am (Europe/London)
+
+  What's contributing to your usage?
+  Approximate · sessions on this machine only
+
+  Last 24h · shares overlap
+
+  50%  Turn off skills you don't use · 16k tokens per request
+  26%  Give "general-purpose" subagents a cheaper model
+
+  Skills                  % of usage
+  /superpowers:brainstorming      6%
+  /superpowers:writing-plans      2%
+
+  Subagents               % of usage
+  general-purpose                18%
+
+  Plugins                 % of usage
+  superpowers                     8%
+
+  f to fix both · d to day · w to week
+
+  Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Show Claude's per-model weekly limits. Claude Code's `/usage` screen now has a `Current week (Fable)` bar under the all-models one; the Claude card shows it as a labelled **Fable** group below the existing session and weekly bars. Any other per-model weekly limit Claude adds appears the same way. Claude Code leaves the per-model bar off its screen on most closely spaced polls, so aitop keeps showing the last value it read for up to 30 minutes rather than letting the group blink. The value is kept in aitop's cache directory, so it survives a restart and is shared between a background service and a TUI running at the same time.
+
+- Poll Claude every 3 minutes instead of every round. Polled every 30 seconds, Claude Code's usage lookup gets rate-limited and its `/usage` screen then omits the per-model bars for five minutes at a time, in aitop and in your own Claude Code sessions alike. The new per-provider `refresh_interval_s` setting controls this (`[providers.claude] refresh_interval_s = 0` restores the old behaviour) and works for any provider. Pressing `r` still refreshes everything at once, and a failed fetch is retried on the next round.
+
 ## v1.6.1 — 2026-10-22
 
 - Fix the Grok card with Grok Build 1.0.67, which asks whether to trust the working directory before the dashboard opens. aitop now accepts that prompt for its own private workspace (never your repository), as it already does for Claude and Gemini, instead of ending the poll on it.

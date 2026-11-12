@@ -254,3 +254,140 @@ def test_provider_changes_cancel_old_fetches_and_wake_polling():
         poller.stop()
         await task
     asyncio.run(scenario())
+
+
+class _Counting:
+    """Provider that counts fetches; `results` (if given) scripts each one."""
+
+    def __init__(self, name: str, calls: list[str], interval_s: float | None = None, ok: bool = True) -> None:
+        self.name = name
+        self._calls = calls
+        self._ok = ok
+        if interval_s is not None:
+            self.refresh_interval_s = interval_s
+
+    async def fetch(self) -> UsageSnapshot:
+        self._calls.append(self.name)
+        return UsageSnapshot(self.name, ok=self._ok, error=None if self._ok else "nope")
+
+
+def _poller_with_clock(providers_factory, clock):
+    results: list[UsageSnapshot] = []
+    poller = Poller(
+        providers=providers_factory(),
+        interval_s=30.0,
+        on_result=results.append,
+        stagger_s=0,
+        provider_factory=providers_factory,
+        clock=lambda: clock[0],
+    )
+    return poller, results
+
+
+def test_provider_with_its_own_interval_is_skipped_until_it_elapses():
+    # A provider may ask to be polled less often than the round (Claude: its
+    # usage endpoint rate-limits frequent polls). Rounds in between must skip
+    # it -- no fetch, no result -- while every other provider still runs. The
+    # providers are rebuilt each round, as in the real app, so the bookkeeping
+    # must be keyed by name rather than held on the instance.
+    calls: list[str] = []
+    clock = [1000.0]
+    poller, results = _poller_with_clock(
+        lambda: [_Counting("slow", calls, interval_s=180.0), _Counting("fast", calls)], clock
+    )
+
+    async def rounds():
+        for at in (1000.0, 1030.0, 1179.0, 1180.0, 1210.0):
+            clock[0] = at
+            await poller.run_once()
+
+    asyncio.run(rounds())
+    assert calls.count("fast") == 5
+    assert calls.count("slow") == 2  # at 1000 and 1180
+    assert [r.provider for r in results].count("slow") == 2
+
+
+def test_forced_round_fetches_a_provider_inside_its_interval():
+    # Pressing `r` is an explicit request for fresh numbers.
+    calls: list[str] = []
+    clock = [0.0]
+    poller, _ = _poller_with_clock(lambda: [_Counting("slow", calls, interval_s=180.0)], clock)
+
+    async def rounds():
+        await poller.run_once()
+        clock[0] = 10.0
+        await poller.run_once()
+        await poller.run_once(force=True)
+        clock[0] = 100.0  # the forced fetch restarted the interval
+        await poller.run_once()
+
+    asyncio.run(rounds())
+    assert len(calls) == 2
+
+
+def test_failed_fetch_is_retried_on_the_next_round_despite_the_interval():
+    # A slow interval must not leave an error on the card for minutes.
+    calls: list[str] = []
+    clock = [0.0]
+    poller, _ = _poller_with_clock(lambda: [_Counting("slow", calls, interval_s=180.0, ok=False)], clock)
+
+    async def rounds():
+        await poller.run_once()
+        clock[0] = 30.0
+        await poller.run_once()
+
+    asyncio.run(rounds())
+    assert len(calls) == 2
+
+
+def test_provider_change_refresh_does_not_bypass_the_interval():
+    # request_refresh() fires on every settings change in the Menu; that must
+    # not turn into a burst of Claude polls.
+    calls: list[str] = []
+    clock = [0.0]
+    poller, _ = _poller_with_clock(lambda: [_Counting("slow", calls, interval_s=180.0)], clock)
+
+    async def scenario():
+        runner = asyncio.create_task(poller.run())
+        await asyncio.sleep(0.05)
+        poller.request_refresh()
+        await asyncio.sleep(0.05)
+        poller.stop()
+        await runner
+
+    asyncio.run(scenario())
+    assert len(calls) == 1
+
+
+def test_provider_switched_off_and_on_again_is_fetched_immediately():
+    calls: list[str] = []
+    clock = [0.0]
+    on = [True]
+    poller, _ = _poller_with_clock(
+        lambda: [_Counting("slow", calls, interval_s=180.0)] if on[0] else [], clock
+    )
+
+    async def rounds():
+        await poller.run_once()
+        on[0] = False
+        clock[0] = 30.0
+        await poller.run_once()
+        on[0] = True
+        clock[0] = 60.0
+        await poller.run_once()
+
+    asyncio.run(rounds())
+    assert len(calls) == 2
+
+
+def test_zero_interval_means_every_round():
+    calls: list[str] = []
+    clock = [0.0]
+    poller, _ = _poller_with_clock(lambda: [_Counting("p", calls, interval_s=0.0)], clock)
+
+    async def rounds():
+        await poller.run_once()
+        await poller.run_once()
+
+    asyncio.run(rounds())
+    assert len(calls) == 2

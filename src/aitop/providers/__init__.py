@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..config import Config, place_providers
+from ..config import Config, place_providers, provider_refresh_interval_s
 from .anthropic import AnthropicProvider
 from .claude import ClaudeProvider
 from .codex import CodexProvider
@@ -50,5 +50,8 @@ def build_providers(config: Config, mock: bool = False) -> list:
         # Wire the per-provider timeout from config so Poller enforces it per
         # provider (previously this value was parsed and then never read).
         provider.timeout_s = config.providers[name].timeout_s
+        # Likewise the provider's own poll interval (None = every round), read
+        # by Poller. Mock mode is a demo, so every card ticks on every round.
+        provider.refresh_interval_s = None if mock else provider_refresh_interval_s(config, name)
         providers.append(provider)
     return providers

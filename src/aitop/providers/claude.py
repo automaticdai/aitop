@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ..models import Quota, UsageSnapshot
-from .pty_driver import DialogResponse, drive_screen_async
+from ..models import Quota, QuotaGroup, UsageSnapshot
+from .pty_driver import DialogResponse, drive_screen_async, provider_workspace
 
 # This session's own Claude Code CLI (and, per the design doc, potentially any
 # user's) may have ANTHROPIC_BASE_URL/ANTHROPIC_AUTH_TOKEN/ANTHROPIC_MODEL set
@@ -77,13 +81,22 @@ _ROWS = 100
 # out -- the "Resets 11pm" style seen in the real capture), the same "5h"/
 # rolling-window bucket concept Gemini's _DAILY_RE matches.
 # "Current week (all models)" -> weekly: explicitly scoped to "(all
-# models)" rather than a bare "Current week" match, so a possible per-model
-# variant (e.g. a Max-plan "Current week (Opus)" row, not present on this
-# Pro-plan account and never observed here) can't be mismatched into this
-# provider's single weekly slot -- same "don't let an adjacent, differently-
-# scoped number leak in" discipline applied to Gemini's model-group sections.
+# models)" rather than a bare "Current week" match, so a per-model row can't
+# be mismatched into this provider's single weekly slot -- same "don't let an
+# adjacent, differently-scoped number leak in" discipline applied to Gemini's
+# model-group sections.
 _SESSION_HEADER = "Current session"
-_WEEK_HEADER = "Current week (all models)"
+_ALL_MODELS = "all models"
+_WEEK_HEADER = f"Current week ({_ALL_MODELS})"
+# Per-model weekly limits render as further "Current week (<name>)" blocks
+# under the aggregate one -- "Current week (Fable)" in the real capture at
+# tests/fixtures/claude_usage_fable.txt (Claude Code v2.1.322). Each becomes
+# its own QuotaGroup labelled with <name> (see _model_groups) rather than a
+# hard-coded model, so a renamed or additional per-model limit shows up
+# without a code change. These rows are deliberately *not* added to
+# _DONE_PATTERNS: accounts without one would never complete, and the panel
+# paints all its bars together anyway.
+_MODEL_WEEK_RE = re.compile(r"Current week \(([^()\n]+)\)")
 
 # Each window renders as its own block: the header, a bar line carrying
 # "NN% used", and then zero or more trailing lines -- a "Resets ..." line,
@@ -121,6 +134,36 @@ _DONE_PATTERNS = [
 ]
 
 
+# The per-model rows are intermittent. Sampled against the real CLI (v2.1.322)
+# at aitop's default 30s cadence, "Current week (Fable)" was on the fully
+# painted panel in only 1 capture out of 10 -- and in every capture taken
+# after a few idle minutes; waiting out the whole timeout instead of stopping
+# on _DONE_PATTERNS never brought it back, so it's the CLI serving a reduced
+# view when polled often, not a paint race. Reporting each capture as-is would
+# make the group blink on and off the card, so the last per-model groups seen
+# are held and reused while a capture comes back without them. The hold is
+# bounded: a limit that really has gone away (plan change, feature withdrawn)
+# drops off the card after this long instead of showing a frozen number
+# forever. 30 minutes = 60 default polls, so at the observed 1-in-10 rate a
+# still-present limit expiring by bad luck is a ~0.2% event.
+_GROUP_HOLD_S = 30 * 60.0
+_now = time.time
+# Where the hold lives: a small file next to the provider workspace, not
+# memory. Two reasons, both seen on a real setup. Poller rebuilds its
+# providers through provider_factory at the start of every round
+# (scheduler.py), so a ClaudeProvider instance lives for exactly one fetch and
+# anything stored on it is gone by the next poll. And aitop commonly runs as
+# two processes at once (the headless service plus a TUI), which between them
+# poll twice as often and so each see the row even more rarely -- a shared
+# file lets a sighting by either one fill the card in both, and means a
+# restart doesn't blank the group until the row next happens to render.
+_HOLD_FILE = "claude_model_limits.json"
+
+
+def _hold_path() -> Path:
+    return provider_workspace().parent / _HOLD_FILE
+
+
 class ClaudeProvider:
     name = "claude"
 
@@ -135,9 +178,11 @@ class ClaudeProvider:
                 done_all=True,
                 dialog_responses=_DIALOG_RESPONSES,
             )
-            return self.parse(text)
+            snap = self.parse(text)
         except Exception as exc:  # noqa: BLE001
             return UsageSnapshot(self.name, ok=False, error=str(exc))
+        _hold_groups(snap)
+        return snap
 
     @staticmethod
     def parse(text: str) -> UsageSnapshot:
@@ -149,9 +194,68 @@ class ClaudeProvider:
             ok=True,
             daily=daily,
             weekly=weekly,
+            groups=_model_groups(text),
             client_info=version.group(0) if version else None,
             raw={"screen": text},
         )
+
+def _hold_groups(snap: UsageSnapshot) -> None:
+    """Remember this capture's per-model groups, or fill in held ones.
+
+    See _GROUP_HOLD_S. Only applied to a capture that parsed the aggregate
+    weekly bar: a screen too broken to show that isn't evidence about the
+    per-model rows either way, and shouldn't be dressed up with old data.
+    The hold is best-effort throughout: an unwritable or corrupt file only
+    means no hold, never a failed poll.
+    """
+    if snap.groups:
+        _save_held(snap.groups)
+    elif snap.weekly is not None:
+        snap.groups = _load_held()
+
+
+def _save_held(groups: list[QuotaGroup]) -> None:
+    payload = {
+        "seen_at": _now(),
+        "groups": [
+            {"label": g.label, "used": g.weekly.used, "reset_note": g.weekly.reset_note}
+            for g in groups
+            if g.weekly is not None
+        ],
+    }
+    try:
+        path = _hold_path()
+        # Write-then-rename so the other aitop process never reads half a file.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _load_held() -> list[QuotaGroup] | None:
+    try:
+        payload = json.loads(_hold_path().read_text())
+        age = _now() - float(payload["seen_at"])
+        # A negative age means the clock moved; don't trust the file then.
+        if not 0 <= age < _GROUP_HOLD_S:
+            return None
+        groups = [
+            QuotaGroup(
+                label=str(g["label"]),
+                weekly=Quota(
+                    used=float(g["used"]),
+                    limit=100.0,
+                    unit="%",
+                    reset_note=None if g["reset_note"] is None else str(g["reset_note"]),
+                ),
+            )
+            for g in payload["groups"]
+        ]
+    except Exception:  # noqa: BLE001
+        return None
+    return groups or None
+
 
 # Claude's "Current session" reset is a wall-clock time-of-day with a
 # timezone ("Resets 11pm (Europe/London)"); a countdown until that reset is
@@ -203,13 +307,38 @@ def _block(text: str, header: str) -> str:
     start = text.find(header)
     if start == -1:
         return ""
-    rest = text[start + len(header) :]
+    return _block_after(text, start + len(header))
+
+
+def _block_after(text: str, pos: int) -> str:
+    rest = text[pos:]
     end = _BLOCK_END_RE.search(rest)
     return rest[: end.start()] if end else rest
 
 
+def _model_groups(text: str) -> list[QuotaGroup] | None:
+    """One QuotaGroup per per-model "Current week (<name>)" block, in screen
+    order; None when the panel has none, so the card renders unchanged.
+
+    A header whose bar didn't parse yields no group at all -- never a
+    fabricated or borrowed number.
+    """
+    groups = []
+    for m in _MODEL_WEEK_RE.finditer(text):
+        label = m.group(1).strip()
+        if label == _ALL_MODELS:
+            continue
+        quota = _quota_in(_block_after(text, m.end()))
+        if quota is not None:
+            groups.append(QuotaGroup(label=label, weekly=quota))
+    return groups or None
+
+
 def _quota_from_block(text: str, header: str, session: bool = False) -> Quota | None:
-    block = _block(text, header)
+    return _quota_in(_block(text, header), session)
+
+
+def _quota_in(block: str, session: bool = False) -> Quota | None:
     if not block:
         return None
     m = _PCT_USED_RE.search(block)

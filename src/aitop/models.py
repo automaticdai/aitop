@@ -88,5 +88,8 @@ class Provider(Protocol):
     # config.providers[name].timeout_s; Poller falls back to its own global
     # default for providers built by hand (tests, embedders).
     timeout_s: float
+    # Poll this provider at most this often (seconds); None = every round.
+    # Stamped by build_providers; Poller treats a missing attribute as None.
+    refresh_interval_s: float | None
 
     async def fetch(self) -> UsageSnapshot: ...

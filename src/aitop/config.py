@@ -107,6 +107,25 @@ class Layout:
     adaptive: bool = False
 
 
+# Providers polled less often than the round unless the config says otherwise.
+# Claude: every poll starts a Claude Code CLI, which calls Anthropic's
+# /api/oauth/usage; polled every 30s that endpoint answers 429 and the CLI
+# then stops asking for 300s ("fetchUtilization: 429 remembered for this
+# bearer" in its --debug log), during which /usage -- for aitop *and* for the
+# user's own sessions on that login -- is drawn without the per-model weekly
+# rows. Every observed poll made 2+ minutes after the previous one got the
+# full panel, so 3 minutes is the default.
+DEFAULT_PROVIDER_REFRESH_S: dict[str, float] = {"claude": 180.0}
+
+
+def provider_refresh_interval_s(config: "Config", name: str) -> float | None:
+    """The provider's own poll interval, or None to poll it every round."""
+    pc = config.providers.get(name)
+    if pc is not None and pc.refresh_interval_s is not None:
+        return pc.refresh_interval_s
+    return DEFAULT_PROVIDER_REFRESH_S.get(name)
+
+
 @dataclass
 class ProviderConfig:
     # (row, col), 1-based, row first (so (1, 1) is the top-left cell). None =
@@ -115,6 +134,11 @@ class ProviderConfig:
     # place_providers().
     position: tuple[int, int] | None = None
     timeout_s: float = 15.0
+    # Poll this provider at most this often (seconds). None = the built-in
+    # default for the provider (DEFAULT_PROVIDER_REFRESH_S), which for most is
+    # "every round". Only ever slows a provider down: rounds still happen
+    # every Config.refresh_interval_s, this one just sits some of them out.
+    refresh_interval_s: float | None = None
     enabled: bool = True
     api_key: str | None = field(default=None, repr=False)
     region: str = "global"
@@ -429,6 +453,13 @@ def _parse_config(path: Path) -> Config:
                             pass  # malformed position -> auto-fill, don't crash
                 if "timeout_s" in pdata:
                     pc.timeout_s = _as_float(pdata, "timeout_s", pc.timeout_s, path)
+                if pdata.get("refresh_interval_s") is not None:
+                    interval = _as_float(pdata, "refresh_interval_s", 0.0, path)
+                    if interval < 0:
+                        raise ConfigError(
+                            f"{path}: `providers.{name}.refresh_interval_s` must not be negative"
+                        )
+                    pc.refresh_interval_s = interval
     _migrate_zero_based_positions(cfg, text)
     return cfg
 

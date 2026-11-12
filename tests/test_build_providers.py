@@ -34,3 +34,23 @@ def test_build_providers_stamps_per_provider_timeout():
     by_name = {p.name: p for p in build_providers(cfg, mock=True)}
     assert by_name["codex"].timeout_s == 7.0
     assert by_name["claude"].timeout_s == 15.0  # untouched -> default
+
+
+def test_build_providers_stamps_refresh_interval():
+    # Claude defaults to a slower poll than the round; other providers carry
+    # no interval of their own (None = every round). Config overrides both.
+    cfg = Config.defaults()
+    by_name = {p.name: p for p in build_providers(cfg)}
+    assert by_name["claude"].refresh_interval_s == 180.0
+    assert by_name["codex"].refresh_interval_s is None
+
+    cfg.providers["claude"].refresh_interval_s = 600.0
+    cfg.providers["codex"].refresh_interval_s = 90.0
+    by_name = {p.name: p for p in build_providers(cfg)}
+    assert by_name["claude"].refresh_interval_s == 600.0
+    assert by_name["codex"].refresh_interval_s == 90.0
+
+
+def test_mock_providers_have_no_refresh_interval():
+    # --mock is a demo: every card should tick on every round.
+    assert all(p.refresh_interval_s is None for p in build_providers(Config.defaults(), mock=True))

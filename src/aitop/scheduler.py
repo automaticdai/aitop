@@ -25,6 +25,7 @@ class Poller:
         timeout_s: float = 15.0,
         stagger_s: float = DEFAULT_STAGGER_S,
         provider_factory: Callable[[], list[Provider]] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.providers = providers
         self.interval_s = interval_s
@@ -32,6 +33,11 @@ class Poller:
         self.timeout_s = timeout_s
         self.stagger_s = stagger_s
         self.provider_factory = provider_factory
+        self._clock = clock
+        # When each provider's last fetch started, by name -- not on the
+        # provider, since provider_factory rebuilds the instances every round.
+        # Only consulted for providers that carry a refresh_interval_s.
+        self._last_fetch: dict[str, float] = {}
         self._stop = asyncio.Event()
         self._wake = asyncio.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -45,8 +51,14 @@ class Poller:
         # config.providers[name].timeout_s; fall back to the Poller's global
         # default for providers built by hand (tests, embedders).
         timeout = getattr(provider, "timeout_s", self.timeout_s)
+        self._last_fetch[provider.name] = self._clock()
         try:
             snapshot = await asyncio.wait_for(provider.fetch(), timeout=timeout)
+        except asyncio.CancelledError:
+            # Cancelled mid-fetch (stop, or a provider settings change): no
+            # result came of it, so it mustn't count against the interval.
+            self._last_fetch.pop(provider.name, None)
+            raise
         except asyncio.TimeoutError:
             # asyncio.TimeoutError carries no message of its own; a bare str()
             # would leave the row reading "ERROR —" with nothing after it.
@@ -55,8 +67,23 @@ class Poller:
             )
         except Exception as exc:  # noqa: BLE001 — never let one provider kill the poll
             snapshot = UsageSnapshot(provider=provider.name, ok=False, error=str(exc))
+        if not snapshot.ok:
+            # A failure is retried on the next round rather than left on the
+            # card for the provider's whole (possibly minutes-long) interval.
+            self._last_fetch.pop(provider.name, None)
         snapshot.fetched_at = time.time()
         self._emit(snapshot)
+
+    def _due(self, provider: Provider) -> bool:
+        """Whether this round should fetch `provider`.
+
+        A provider with its own refresh_interval_s sits out the rounds that
+        fall inside it: no fetch and no result, so its card simply keeps the
+        last snapshot it was given.
+        """
+        interval = getattr(provider, "refresh_interval_s", None)
+        last = self._last_fetch.get(provider.name)
+        return not interval or last is None or self._clock() - last >= interval
 
     def _emit(self, snapshot: UsageSnapshot) -> None:
         try:
@@ -67,7 +94,7 @@ class Poller:
             # whole polling worker -- and with it the dashboard -- down.
             log.exception("on_result callback failed for provider %s", snapshot.provider)
 
-    async def _run_round(self) -> None:
+    async def _run_round(self, force: bool = False) -> None:
         if self._round_in_flight:
             # A round is already running (periodic poll, or an earlier manual
             # refresh). Holding down `r` must not stack up rounds: each one
@@ -79,9 +106,17 @@ class Poller:
         self._loop = asyncio.get_running_loop()
         if self.provider_factory is not None:
             self.providers = self.provider_factory()
+        # A provider that was switched off loses its bookkeeping, so switching
+        # it back on fetches straight away instead of leaving a freshly built,
+        # empty card waiting out the rest of an interval.
+        names = {provider.name for provider in self.providers}
+        for name in [n for n in self._last_fetch if n not in names]:
+            del self._last_fetch[name]
         tasks = {
             asyncio.create_task(self._fetch_one(provider, index))
-            for index, provider in enumerate(self.providers)
+            for index, provider in enumerate(
+                [p for p in self.providers if force or self._due(p)]
+            )
         }
         self._fetch_tasks.update(tasks)
         try:
@@ -111,8 +146,11 @@ class Poller:
             except asyncio.TimeoutError:
                 pass
 
-    async def run_once(self) -> None:
-        await self._run_round()
+    async def run_once(self, force: bool = False) -> None:
+        """Run one round now. `force` also fetches providers that are inside
+        their own refresh_interval_s (a manual refresh asks for fresh numbers).
+        """
+        await self._run_round(force)
 
     def request_refresh(self) -> None:
         """Wake polling and cancel old fetches after a provider config change."""

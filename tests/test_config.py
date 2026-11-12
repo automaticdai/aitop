@@ -522,3 +522,29 @@ def test_zero_based_migration_is_not_reapplied_once_positions_are_one_based(tmp_
     cfg = load_config(p)
     assert cfg.providers["claude"].position == (1, 1)
     assert cfg.providers["deepseek"].position == (4, 1)
+
+
+def test_provider_refresh_interval_defaults_and_overrides(tmp_path):
+    from aitop.config import provider_refresh_interval_s
+
+    cfg = Config.defaults()
+    assert cfg.providers["claude"].refresh_interval_s is None  # unset in the file...
+    assert provider_refresh_interval_s(cfg, "claude") == 180.0  # ...means the built-in default
+    assert provider_refresh_interval_s(cfg, "codex") is None
+
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[providers.claude]\nrefresh_interval_s = 0\n"
+        "[providers.codex]\nrefresh_interval_s = 90\n"
+    )
+    cfg = load_config(p)
+    assert provider_refresh_interval_s(cfg, "claude") == 0.0  # explicit 0 = every round
+    assert provider_refresh_interval_s(cfg, "codex") == 90.0
+
+
+def test_provider_refresh_interval_rejects_bad_values(tmp_path):
+    p = tmp_path / "config.toml"
+    for bad in ("-5", '"often"'):
+        p.write_text(f"[providers.claude]\nrefresh_interval_s = {bad}\n")
+        with pytest.raises(ConfigError):
+            load_config(p)
