@@ -197,7 +197,7 @@ def format_quota_value(q: Quota) -> str:
     return f"{q.used:.0f}/{q.limit:.0f} {q.unit} ({fmt_pct(q.pct)})"
 
 
-def _fit_bar(width: int | None, value: str) -> int:
+def _fit_bar(width: int | None, value: str, label_width: int = LABEL_WIDTH) -> int:
     """Widest bar keeping "<label><bar> <value>" inside `width`.
 
     Never returns more than BAR_WIDTH (a wider card doesn't need a longer
@@ -206,7 +206,7 @@ def _fit_bar(width: int | None, value: str) -> int:
     """
     if width is None:
         return BAR_WIDTH
-    return max(MIN_BAR_WIDTH, min(BAR_WIDTH, width - LABEL_WIDTH - 1 - len(value)))
+    return max(MIN_BAR_WIDTH, min(BAR_WIDTH, width - label_width - 1 - len(value)))
 
 
 @dataclass(frozen=True)
@@ -244,9 +244,12 @@ def _quota_cell(label: str, q: Quota, width: int | None = None, display: QuotaDi
     color = bar_color(q.pct)
     value = format_remaining_value(q) if display.show_remaining else format_quota_value(q)
     pct = remaining_pct(q) if display.show_remaining else q.pct
-    bar = "" if q.unlimited else render_bar(pct, _fit_bar(width, value))
-    head = f"{label:<{LABEL_WIDTH}}{bar} {value}"
-    lines = [(f"{label:<{LABEL_WIDTH}}[{color}]{bar}[/{color}] {escape(value)}", len(head))]
+    # A label longer than the usual column ("weekly (Fable)") takes the room
+    # it needs out of its own bar rather than overflowing the card.
+    label_width = max(LABEL_WIDTH, len(label) + 1)
+    bar = "" if q.unlimited else render_bar(pct, _fit_bar(width, value, label_width))
+    head = f"{label:<{label_width}}{bar} {value}"
+    lines = [(f"{escape(label):<{label_width + len(escape(label)) - len(label)}}[{color}]{bar}[/{color}] {escape(value)}", len(head))]
     if q.reset_note:
         # Normally hung under the bar, but a vendor's own wording can be long
         # ("Resets Aug 25, 5am (Europe/London)") and unlike the bar it can't
@@ -278,6 +281,31 @@ def daily_label(provider: str) -> str:
     if provider in ("claude", "codex", "glm", "minimax"):
         return "session"
     return "daily"
+
+
+def flat_groups(provider: str) -> bool:
+    """Whether a provider's groups render as plain rows instead of sections.
+
+    Gemini's groups are separate pools, each with its own windows, so they
+    get a heading (and, on the web, a divider). Claude's are per-model caps
+    on the *same* weekly window as the row above them -- one bar each -- so a
+    heading plus a "weekly" row spends two lines saying what one can:
+    "weekly (Fable)". Shared with the web view so both surfaces agree.
+    """
+    return provider == "claude"
+
+
+def flat_group_label(window: str, group_label: str) -> str:
+    return f"{window} ({group_label})" if group_label else window
+
+
+def _flat_group_lines(groups: list[QuotaGroup], width: int | None, display: QuotaDisplay) -> list[str]:
+    lines: list[str] = []
+    for group in groups:
+        for window, quota in (("daily", group.daily), ("weekly", group.weekly), ("monthly", group.monthly)):
+            if quota is not None:
+                lines.extend(_quota_line(flat_group_label(window, group.label), quota, width, display))
+    return lines
 
 
 def _group_cell(group: QuotaGroup, width: int | None = None, display: QuotaDisplay = QuotaDisplay()) -> list[tuple[str, int]]:
@@ -390,6 +418,9 @@ def _value_lines(snap: UsageSnapshot, width: int | None = None, display: QuotaDi
         lines.extend(_quota_line("weekly", snap.weekly, width, display))
     if snap.monthly is not None:
         lines.extend(_quota_line("monthly", snap.monthly, width, display))
+    flat = flat_groups(snap.provider)
+    if flat:
+        lines.extend(_flat_group_lines(_visible_groups(snap, display), width, display))
     if snap.balance is not None:
         b = snap.balance
         lines.append(f"balance  {b.amount:.2f} {escape(b.currency)}")
@@ -397,7 +428,8 @@ def _value_lines(snap: UsageSnapshot, width: int | None = None, display: QuotaDi
             lines.append("         [red]insufficient for API calls[/red]")
     if snap.spend:
         lines.extend(_spend_lines(snap.spend))
-    lines.extend(_group_lines(_visible_groups(snap, display), width, display))
+    if not flat:
+        lines.extend(_group_lines(_visible_groups(snap, display), width, display))
     return lines
 
 

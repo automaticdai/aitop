@@ -22,7 +22,7 @@ from . import __version__
 from .config import Config, ConfigError, PROVIDER_NAMES, API_KEY_PROVIDERS, REGIONAL_PROVIDERS, preferred_first, provider_api_key, WebLayout, layout_cells, save_web_settings
 from .models import Balance, Quota, QuotaGroup, UsageSnapshot
 from .reset_timer import format_reset_note
-from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, format_quota_value, has_data, remaining_pct, format_remaining_value
+from .render import DISPLAY_NAME, bar_color, bar_pct, daily_label, flat_groups, format_quota_value, has_data, remaining_pct, format_remaining_value
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +113,9 @@ def snapshot_to_dict(snap: UsageSnapshot, *, stale: str | None = None) -> dict:
             {"label": item.label, "amount": item.amount, "currency": item.currency}
             for item in (snap.spend or [])
         ],
+        # True = draw each group as plain "weekly (Label)" rows rather than a
+        # titled, divided section (see render.flat_groups).
+        "flat_groups": flat_groups(snap.provider),
         "groups": [
             {"label": g.label, "daily": _quota(g.daily, snap.fetched_at), "weekly": _quota(g.weekly, snap.fetched_at),
              "monthly": _quota(g.monthly, snap.fetched_at)}
@@ -1287,6 +1290,15 @@ INDEX_HTML = """<!doctype html>
       if (s.daily) body += quotaRow(s.daily_label, s.daily);
       if (s.weekly) body += quotaRow("weekly", s.weekly);
       if (s.monthly) body += quotaRow("monthly", s.monthly);
+      if (s.flat_groups) {
+        // Per-model caps on the same window as the rows above (Claude's
+        // "Fable" weekly limit): one more row each, no heading or divider.
+        (s.groups || []).forEach(g => {
+          [["daily", g.daily], ["weekly", g.weekly], ["monthly", g.monthly]].forEach(([w, q]) => {
+            if (q) body += quotaRow(g.label ? w + " (" + g.label + ")" : w, q);
+          });
+        });
+      }
       if (s.balance) {
         body += '<div class="balance">balance ' + s.balance.amount.toFixed(2) + " " +
           esc(s.balance.currency) + (s.balance.available ? "" : ' <span class="badge error">insufficient</span>') + "</div>";
@@ -1297,7 +1309,7 @@ INDEX_HTML = """<!doctype html>
             '</span><span class="amount">' + item.amount.toFixed(2) + " " + esc(item.currency) +
             "</span></div>").join("") + "</div>";
       }
-      const groups = (s.groups || []).filter(g => showClaudeGpt || s.provider !== "gemini" || g.label !== "Claude & GPT-OSS");
+      const groups = (s.flat_groups ? [] : (s.groups || [])).filter(g => showClaudeGpt || s.provider !== "gemini" || g.label !== "Claude & GPT-OSS");
       if (groups.length) {
         body += '<div class="groups">';
         groups.forEach(g => {

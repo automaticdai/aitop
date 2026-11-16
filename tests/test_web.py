@@ -913,3 +913,32 @@ def test_store_replaces_old_error_or_empty_snapshot_with_current_error(previous)
     entry = store.entries()[0]
     assert entry["error"] == "No Coding Plan"
     assert entry["stale"] is None
+
+
+def test_claude_per_model_limit_renders_as_one_row_without_a_divided_section():
+    snap = UsageSnapshot(
+        "claude",
+        daily=Quota(5, 100, "%"),
+        weekly=Quota(33, 100, "%"),
+        groups=[QuotaGroup("Fable", weekly=Quota(64, 100, "%"))],
+    )
+    d = snapshot_to_dict(snap)
+    assert d["flat_groups"] is True
+    html = _render_in_js(Config.defaults(), [d], "")["html"]
+    assert "weekly (Fable)" in html
+    assert "36.0% left" in html  # the web view shows remaining by default
+    # No titled, dashed-bordered section for it.
+    assert 'class="group"' not in html
+    assert "group-label" not in html
+    # ...and it comes straight after the all-models weekly row.
+    assert html.index("67.0% left") < html.index("weekly (Fable)") < html.index("36.0% left")
+
+
+def test_gemini_groups_still_render_as_titled_sections_on_the_web():
+    snap = UsageSnapshot("gemini", groups=[QuotaGroup("Gemini", weekly=Quota(6, 100, "%")),
+                                           QuotaGroup("Claude & GPT-OSS", weekly=Quota(35, 100, "%"))])
+    d = snapshot_to_dict(snap)
+    assert d["flat_groups"] is False
+    html = _render_in_js(Config.defaults(), [d], "")["html"]
+    assert 'class="group"' in html and "group-label" in html
+    assert "weekly (Gemini)" not in html

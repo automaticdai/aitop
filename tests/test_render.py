@@ -548,3 +548,44 @@ def test_show_claude_gpt_off_applies_to_a_stale_card_too():
     out = render_stale(_antigravity(), "boom", None, QuotaDisplay(show_claude_gpt=False))
     assert "Claude & GPT-OSS" not in out
     assert "6.0%" in out
+
+
+def _claude_with_fable() -> UsageSnapshot:
+    return UsageSnapshot(
+        "claude",
+        daily=Quota(5, 100, "%", "Reset in 2h 15m"),
+        weekly=Quota(33, 100, "%", "Resets Nov 17, 8am (Europe/London)"),
+        groups=[QuotaGroup("Fable", weekly=Quota(64, 100, "%", "Resets Nov 17, 8am (Europe/London)"))],
+    )
+
+
+def test_claude_per_model_limit_is_one_labelled_row_not_a_titled_section():
+    import re
+
+    out = render_snapshot(_claude_with_fable(), width=70)
+    plain = [re.sub(r"\[/?[^\]]*\]", "", line) for line in out.splitlines()]
+    row = [line for line in plain if line.startswith("weekly (Fable)")]
+    assert len(row) == 1 and "64.0%" in row[0] and "█" in row[0]
+    # No separate heading line for the group.
+    assert "Fable" not in [line.strip() for line in plain]
+    assert "[dim]Fable[/dim]" not in out
+    # It sits directly under the all-models weekly block, not after a gap.
+    weekly_note = plain.index("        Resets Nov 17, 8am (Europe/London)")
+    assert plain[weekly_note + 1] == row[0]
+
+
+def test_long_flat_label_shrinks_its_bar_instead_of_overflowing_a_narrow_card():
+    import re
+
+    for width in (30, 40, 70):
+        out = render_snapshot(_claude_with_fable(), width=width)
+        plain = [re.sub(r"\[/?[^\]]*\]", "", line) for line in out.splitlines()]
+        row = next(line for line in plain if line.startswith("weekly (Fable)"))
+        assert len(row) <= width, (width, row)
+
+
+def test_gemini_groups_keep_their_titled_sections():
+    snap = UsageSnapshot("gemini", groups=[QuotaGroup(label="Gemini", weekly=Quota(6, 100, "%"))])
+    out = render_snapshot(snap, width=70)
+    assert "[dim]Gemini[/dim]" in out
+    assert "weekly (Gemini)" not in out
