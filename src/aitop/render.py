@@ -214,6 +214,7 @@ class QuotaDisplay:
     show_remaining: bool = False
     reset_countdown: bool = False
     show_claude_gpt: bool = True
+    show_claude_model_limits: bool = True
     fetched_at: float = 0
 
 
@@ -389,6 +390,9 @@ CLAUDE_GPT_LABEL = "Claude & GPT-OSS"
 
 def _visible_groups(snap: UsageSnapshot, display: QuotaDisplay) -> list[QuotaGroup]:
     groups = snap.groups or []
+    if snap.provider == "claude":
+        # Claude's groups are its per-model weekly limits ("weekly (Fable)").
+        return groups if display.show_claude_model_limits else []
     if display.show_claude_gpt or snap.provider != "gemini":
         return groups
     kept = [g for g in groups if g.label != CLAUDE_GPT_LABEL]

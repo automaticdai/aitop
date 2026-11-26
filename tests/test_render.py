@@ -589,3 +589,20 @@ def test_gemini_groups_keep_their_titled_sections():
     out = render_snapshot(snap, width=70)
     assert "[dim]Gemini[/dim]" in out
     assert "weekly (Gemini)" not in out
+
+
+def test_show_claude_model_limits_off_hides_the_fable_row():
+    out = render_snapshot(_claude_with_fable(), width=70, display=QuotaDisplay(show_claude_model_limits=False))
+    assert "weekly (Fable)" not in out
+    assert "64.0%" not in out
+    assert "33.0%" in out or "67.0%" in out
+
+
+def test_show_claude_model_limits_off_applies_to_a_stale_card_too():
+    out = render_stale(_claude_with_fable(), "boom", None, QuotaDisplay(show_claude_model_limits=False))
+    assert "Fable" not in out
+
+
+def test_show_claude_model_limits_only_affects_claude():
+    out = render_snapshot(_antigravity(), None, QuotaDisplay(show_claude_model_limits=False))
+    assert "Claude & GPT-OSS" in out

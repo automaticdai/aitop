@@ -222,7 +222,8 @@ class AitopApp(App):
         # Fixed layouts retain their placeholders so explicitly blank cells
         # preserve the configured grid shape.
         display = QuotaDisplay(self.config.show_remaining, self.config.reset_countdown,
-                               self.config.show_claude_gpt)
+                               self.config.show_claude_gpt,
+                               self.config.show_claude_model_limits)
         children = (
             (SnapshotRow(name, display) for name in cells if name)
             if self.config.layout.adaptive

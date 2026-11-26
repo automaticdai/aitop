@@ -548,3 +548,11 @@ def test_provider_refresh_interval_rejects_bad_values(tmp_path):
         p.write_text(f"[providers.claude]\nrefresh_interval_s = {bad}\n")
         with pytest.raises(ConfigError):
             load_config(p)
+
+
+def test_show_claude_model_limits_defaults_on_and_reads_from_file(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("")
+    assert load_config(path).show_claude_model_limits is True
+    path.write_text("show_claude_model_limits = false\n")
+    assert load_config(path).show_claude_model_limits is False

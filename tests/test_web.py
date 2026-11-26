@@ -339,6 +339,7 @@ def test_web_fixed_layout_filters_and_orders_snapshots():
     assert page_config.pop("settings_token")
     assert page_config.pop("settings") == {
         "layout": {"mode": "custom", "rows": 2, "columns": 3}, "show_claude_gpt": True,
+        "show_claude_model_limits": True,
         "provider_order": ["codex", "claude"],
         "enabled_providers": ["claude", "codex"],
         # Derived from the provider tables rather than spelled out: the claim
@@ -501,6 +502,7 @@ def test_grid_settings_save_reload_and_switch_to_adaptive():
     assert saved["open"] is True
     assert json.loads(saved["writes"][0]["body"]) == {
         "layout": {"mode": "custom", "rows": 2, "columns": 2}, "show_claude_gpt": True,
+        "show_claude_model_limits": True,
         "provider_order": ["claude", "codex", "gemini", "deepseek"],
         "enabled_providers": ["claude", "codex", "gemini", "deepseek"],
     }
@@ -668,7 +670,7 @@ def test_menu_keeps_a_configured_providers_options_collapsed(monkeypatch):
     assert 'data-disclose="glm"' in rendered["providerSwitchHtml"]
     assert 'aria-expanded="false"' in rendered["providerSwitchHtml"]
     # Providers with nothing to configure get no chevron at all.
-    assert 'data-disclose="claude"' not in rendered["providerSwitchHtml"]
+    assert 'data-disclose="codex"' not in rendered["providerSwitchHtml"]
 
 
 def test_menu_opens_expanded_where_an_enabled_provider_still_needs_a_key(monkeypatch):
@@ -942,3 +944,27 @@ def test_gemini_groups_still_render_as_titled_sections_on_the_web():
     html = _render_in_js(Config.defaults(), [d], "")["html"]
     assert 'class="group"' in html and "group-label" in html
     assert "weekly (Gemini)" not in html
+
+
+def _claude_fable_dict():
+    from aitop.models import QuotaGroup
+    return snapshot_to_dict(UsageSnapshot(
+        "claude", daily=Quota(5, 100, "%"), weekly=Quota(33, 100, "%"),
+        groups=[QuotaGroup("Fable", weekly=Quota(64, 100, "%"))],
+    ))
+
+
+def test_web_claude_card_shows_per_model_limits_by_default():
+    config = Config.defaults()
+    config.layout.adaptive = True
+    rendered = _render_in_js(config, [_claude_fable_dict()], "")
+    assert "weekly (Fable)" in rendered["html"]
+
+
+def test_web_claude_card_hides_per_model_limits_when_switched_off():
+    config = Config.defaults()
+    config.layout.adaptive = True
+    config.show_claude_model_limits = False
+    rendered = _render_in_js(config, [_claude_fable_dict()], "")
+    assert "weekly (Fable)" not in rendered["html"]
+    assert "33.0%" in rendered["html"] or "67.0%" in rendered["html"]

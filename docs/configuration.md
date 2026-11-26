@@ -14,6 +14,7 @@ refresh_interval_s = 30
 show_remaining = true
 reset_countdown = true
 show_claude_gpt = true
+show_claude_model_limits = true
 provider_order = ["claude", "codex", "gemini", "deepseek"]
 
 [layout]
@@ -90,6 +91,7 @@ columns = 2
 - `show_remaining` — show quota left in both interfaces by default. Set `false` to show usage.
 - `reset_countdown` — format session reset timers as `yh zm` and other windows as `xd yh zm` in both interfaces. Defaults to `true`; set `false` for vendor wording. Unknown reset notes are preserved. Countdown dates use the vendor timezone when supplied, otherwise the server timezone.
 - `show_claude_gpt` — show the Claude & GPT-OSS quota group inside Antigravity, in both interfaces. Defaults to `true`. With one pool left, its now-redundant `Gemini` heading is dropped.
+- `show_claude_model_limits` — show Claude Code's per-model weekly limits, such as `weekly (Fable)`, on the Claude card, in both interfaces. Defaults to `true`. Set `false` to keep only the session and all-models weekly rows. Also under **Menu → Providers → Claude Code**.
 - `provider_order` — preferred card order in both interfaces, saved by dragging a card on the dashboard or a provider row under **Menu → Providers**. Defaults to `[]`, which follows the base provider order. Disabled providers stay hidden, and enabled providers missing from this list are appended. In the terminal UI this decides the order cards *auto-fill* into the grid, so an explicit `position` still wins; under `adaptive = true` (where positions are ignored) it orders every card.
 - `[layout]` — the dashboard's grid. `rows` × `columns`. Defaults to a single column of 4 rows (the original vertical stack), so omitting this section changes nothing.
   - `adaptive` — automatically chooses as many columns as fit the terminal while keeping cards wide enough for their wordmarks. Defaults to `false`. When `true`, `rows` and `columns` are derived from the terminal width and every enabled built-in provider is shown in `provider_order` (falling back to the standard order); all `position` values, including `[-1, -1]`, are ignored.

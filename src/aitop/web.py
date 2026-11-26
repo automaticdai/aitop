@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 # that adding a keyed or regional provider can't silently leave its field
 # rejected by the request validator.
 _SETTINGS_FIELDS = (
-    {"layout", "show_claude_gpt", "provider_order", "enabled_providers"}
+    {"layout", "show_claude_gpt", "show_claude_model_limits", "provider_order", "enabled_providers"}
     | {name + "_api_key" for name in API_KEY_PROVIDERS}
     | {name + "_region" for name in REGIONAL_PROVIDERS}
 )
@@ -184,6 +184,7 @@ def build_app(
 
     def settings_data() -> dict:
         return {"layout": asdict(config.web.layout), "show_claude_gpt": config.show_claude_gpt,
+                "show_claude_model_limits": config.show_claude_model_limits,
                 "provider_order": ordered_names(),
                 "enabled_providers": [name for name in PROVIDER_NAMES if name in ordered_names()],
                 **{name + "_api_key_configured": bool(provider_api_key(name, config.providers.get(name)))
@@ -261,6 +262,7 @@ def build_app(
         names = enabled if enabled is not None else ordered_names()
         if (
             type(data["show_claude_gpt"]) is not bool
+            or type(data.get("show_claude_model_limits", True)) is not bool
             or not isinstance(layout, dict)
             or set(layout) != {"mode", "rows", "columns"}
             or layout["mode"] not in ("adaptive", "custom")
@@ -281,7 +283,8 @@ def build_app(
                 previous = ordered_names()
                 region_changed = any(region != getattr(config.providers.get(name), "region", "global")
                                      for name, region in regions.items())
-                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_keys=api_keys, regions=regions)
+                save_web_settings(config, WebLayout(**layout), data["show_claude_gpt"], order, enabled, api_keys=api_keys, regions=regions,
+                                  show_claude_model_limits=data.get("show_claude_model_limits"))
                 return settings_data(), previous != ordered_names() or bool(api_keys) or region_changed
 
         try:
@@ -572,6 +575,13 @@ INDEX_HTML = """<!doctype html>
         <div id="provider-switches">
           <div class="provider-setting" data-provider="claude">
             <div id="provider-toggle-claude"></div>
+            <div class="provider-options" id="claude-options" hidden>
+              <div class="toggle-setting">
+                <span id="show-claude-models-label">Per-model weekly limits (Fable)</span>
+                <input id="show-claude-models" type="checkbox" role="switch"
+                       aria-labelledby="show-claude-models-label">
+              </div>
+            </div>
           </div>
           <div class="provider-setting" data-provider="codex">
             <div id="provider-toggle-codex"></div>
@@ -710,6 +720,7 @@ INDEX_HTML = """<!doctype html>
     const rowsInput = document.getElementById("grid-rows");
     const columnsInput = document.getElementById("grid-columns");
     const groupInput = document.getElementById("show-claude-gpt");
+    const modelLimitsInput = document.getElementById("show-claude-models");
     const settingsFields = document.getElementById("settings-fields");
     const layoutStatus = document.getElementById("layout-status");
     const layoutError = document.getElementById("layout-error");
@@ -720,7 +731,7 @@ INDEX_HTML = """<!doctype html>
     const regionalProviders = ['glm', 'kimi', 'minimax'];
     // Providers whose row owns a collapsible section. Gemini's is a display
     // preference; the rest are credentials.
-    const optionProviders = ['gemini', ...keyedProviders];
+    const optionProviders = ['claude', 'gemini', ...keyedProviders];
     let savedAccountSettings = CONFIG.settings;
     // Which sections are open. A view state, not a setting: it is recomputed
     // every time the menu opens and never travels to the config file.
@@ -758,6 +769,7 @@ INDEX_HTML = """<!doctype html>
     let settingsGeneration = 0;
     let savedLayout = CONFIG.settings.layout;
     let savedShowClaudeGpt = CONFIG.settings.show_claude_gpt;
+    let savedShowClaudeModels = CONFIG.settings.show_claude_model_limits;
     let savedOrder = CONFIG.settings.provider_order;
     let activeOrder = [...savedOrder];
     let dragState = null;
@@ -765,6 +777,7 @@ INDEX_HTML = """<!doctype html>
     // two can never be mid-gesture at once.
     let rowDrag = null;
     let showClaudeGpt = savedShowClaudeGpt;
+    let showClaudeModels = savedShowClaudeModels;
 
     function validLayout(value) {
       if (!value || typeof value !== "object") return false;
@@ -793,6 +806,7 @@ INDEX_HTML = """<!doctype html>
     }
     function previewLayout() {
       showClaudeGpt = groupInput.checked;
+      showClaudeModels = modelLimitsInput.checked;
       const custom = modeInput.value === "custom";
       document.getElementById("custom-grid").hidden = !custom;
       rowsInput.disabled = columnsInput.disabled = !custom;
@@ -840,6 +854,7 @@ INDEX_HTML = """<!doctype html>
       renderProviderSwitches();
       applyProviderOrder();
       groupInput.checked = savedShowClaudeGpt;
+      modelLimitsInput.checked = savedShowClaudeModels;
       modeInput.value = savedLayout.mode;
       const initialColumns = savedLayout.columns;
       columnsInput.value = initialColumns;
@@ -852,6 +867,7 @@ INDEX_HTML = """<!doctype html>
     function restoreSettings() {
       restoreAccountSettings();
       showClaudeGpt = savedShowClaudeGpt;
+      showClaudeModels = savedShowClaudeModels;
       providerNames = [...savedEnabled];
       activeOrder = [...savedOrder];
       resetDisclosure();
@@ -860,7 +876,7 @@ INDEX_HTML = """<!doctype html>
       applyLayout(savedLayout);
     }
     function menuPreferences(layout) {
-      const preferences = {layout, show_claude_gpt: groupInput.checked, provider_order: activeOrder, enabled_providers: providerNames};
+      const preferences = {layout, show_claude_gpt: groupInput.checked, show_claude_model_limits: modelLimitsInput.checked, provider_order: activeOrder, enabled_providers: providerNames};
       keyedProviders.forEach(name => {
         const input = document.getElementById(name + '-api-key');
         const key = input.value.trim();
@@ -921,6 +937,7 @@ INDEX_HTML = """<!doctype html>
         if (!response.ok) throw new Error(data.error || "Could not save settings.");
         savedLayout = data.layout;
         savedShowClaudeGpt = data.show_claude_gpt;
+        savedShowClaudeModels = data.show_claude_model_limits;
         savedOrder = data.provider_order;
         savedEnabled = data.enabled_providers;
         savedAccountSettings = data;
@@ -981,6 +998,7 @@ INDEX_HTML = """<!doctype html>
     }
     function updateProviderOptions() {
       groupInput.disabled = !providerNames.includes('gemini');
+      modelLimitsInput.disabled = !providerNames.includes('claude');
       keyedProviders.forEach(name => {
         document.getElementById(name + '-api-key').disabled = !providerNames.includes(name);
       });
@@ -1244,6 +1262,7 @@ INDEX_HTML = """<!doctype html>
     rowsInput.addEventListener("input", () => scheduleMenuSave());
     columnsInput.addEventListener("input", () => scheduleMenuSave());
     groupInput.addEventListener("change", () => scheduleMenuSave(0));
+    modelLimitsInput.addEventListener("change", () => scheduleMenuSave(0));
     keyedProviders.forEach(name => {
       document.getElementById(name + '-api-key').addEventListener('input', () => scheduleMenuSave(600));
     });
@@ -1290,7 +1309,7 @@ INDEX_HTML = """<!doctype html>
       if (s.daily) body += quotaRow(s.daily_label, s.daily);
       if (s.weekly) body += quotaRow("weekly", s.weekly);
       if (s.monthly) body += quotaRow("monthly", s.monthly);
-      if (s.flat_groups) {
+      if (s.flat_groups && (showClaudeModels || s.provider !== "claude")) {
         // Per-model caps on the same window as the rows above (Claude's
         // "Fable" weekly limit): one more row each, no heading or divider.
         (s.groups || []).forEach(g => {
@@ -1377,6 +1396,7 @@ INDEX_HTML = """<!doctype html>
         if (!saving && !menuDirty && !settings.open && !dragState && generation === settingsGeneration) {
           savedLayout = preferences.layout;
           savedShowClaudeGpt = preferences.show_claude_gpt;
+          savedShowClaudeModels = preferences.show_claude_model_limits;
           savedOrder = preferences.provider_order;
           savedEnabled = preferences.enabled_providers;
           savedAccountSettings = preferences;

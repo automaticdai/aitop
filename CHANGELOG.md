@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an option to hide Claude's per-model weekly limits. Turn off **Per-model weekly limits (Fable)** under **Menu → Providers → Claude Code**, or set `show_claude_model_limits = false`, and the Claude card shows only its session and all-models weekly rows. It applies in both the web view and the terminal UI and defaults to on.
+
 - Show Claude's per-model weekly limits. Claude Code's `/usage` screen now has a `Current week (Fable)` bar under the all-models one; the Claude card shows it as one more row, `weekly (Fable)`, under the existing session and weekly bars. Any other per-model weekly limit Claude adds appears the same way. Claude Code leaves the per-model bar off its screen on most closely spaced polls, so aitop keeps showing the last value it read for up to 30 minutes rather than letting the group blink. The value is kept in aitop's cache directory, so it survives a restart and is shared between a background service and a TUI running at the same time.
 
 - Poll Claude every 3 minutes instead of every round. Polled every 30 seconds, Claude Code's usage lookup gets rate-limited and its `/usage` screen then omits the per-model bars for five minutes at a time, in aitop and in your own Claude Code sessions alike. The new per-provider `refresh_interval_s` setting controls this (`[providers.claude] refresh_interval_s = 0` restores the old behaviour) and works for any provider. Pressing `r` still refreshes everything at once, and a failed fetch is retried on the next round.

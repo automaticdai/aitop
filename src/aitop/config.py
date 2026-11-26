@@ -173,6 +173,8 @@ class Config:
     # the dashboard and the web view render the same providers in the same
     # order, so these are not [web]-scoped (they were until v1.4).
     show_claude_gpt: bool = True
+    # Claude Code's per-model weekly limits ("weekly (Fable)").
+    show_claude_model_limits: bool = True
     provider_order: list[str] = field(default_factory=list)
     layout: Layout = field(default_factory=Layout)
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
@@ -309,6 +311,8 @@ def default_config_toml() -> str:
         f"reset_countdown = {str(cfg.reset_countdown).lower()}",
         "# Show the Claude & GPT-OSS pool inside the Antigravity card.",
         f"show_claude_gpt = {str(cfg.show_claude_gpt).lower()}",
+        "# Show per-model weekly limits (such as Fable) on the Claude Code card.",
+        f"show_claude_model_limits = {str(cfg.show_claude_model_limits).lower()}",
         "provider_order = [] # Empty follows the base provider order.",
         "",
         "[layout]",
@@ -378,6 +382,7 @@ def _parse_config(path: Path) -> Config:
     cfg.show_remaining = _as_bool(data, "show_remaining", True, path)
     cfg.reset_countdown = _as_bool(data, "reset_countdown", True, path)
     cfg.show_claude_gpt = _as_bool(data, "show_claude_gpt", True, path)
+    cfg.show_claude_model_limits = _as_bool(data, "show_claude_model_limits", True, path)
     cfg.provider_order = _as_provider_order(data, "provider_order", "provider_order", path)
     cfg.web.show_remaining = cfg.show_remaining
     cfg.web.reset_countdown = cfg.reset_countdown
@@ -531,6 +536,7 @@ def save_web_settings(
     enabled_providers: list[str] | None = None,
     deepseek_api_key: str | None = None,
     *, api_keys: dict[str, str] | None = None, regions: dict[str, str] | None = None,
+    show_claude_model_limits: bool | None = None,
 ) -> None:
     """Persist only web preferences; publish in memory only after a successful save.
 
@@ -555,6 +561,8 @@ def save_web_settings(
         original = path.read_text()
         document = tomlkit.parse(original)
         document["show_claude_gpt"] = show_claude_gpt
+        if show_claude_model_limits is not None:
+            document["show_claude_model_limits"] = show_claude_model_limits
         if provider_order is not None:
             document["provider_order"] = provider_order
         web = document.setdefault("web", tomlkit.table())
@@ -600,6 +608,8 @@ def save_web_settings(
             Path(temporary).unlink(missing_ok=True)
     config.web.layout = layout
     config.show_claude_gpt = show_claude_gpt
+    if show_claude_model_limits is not None:
+        config.show_claude_model_limits = show_claude_model_limits
     if provider_order is not None:
         config.provider_order = list(provider_order)
     if updated is not None:

@@ -47,7 +47,7 @@ Open **http://localhost:8787**. The web server is off by default.
 
 *Web dashboard with demo data.*
 
-- **Menu:** turn providers on/off, set provider API keys and regions, and choose a grid. Reorder cards by dragging a provider row by its grip under **Providers** (arrow keys work on a focused grip), or by dragging a card on the dashboard. Toggle Antigravity's Claude & GPT-OSS group; its remaining Gemini group needs no extra title. Author, version, and GitHub are also listed here.
+- **Menu:** turn providers on/off, set provider API keys and regions, and choose a grid. Reorder cards by dragging a provider row by its grip under **Providers** (arrow keys work on a focused grip), or by dragging a card on the dashboard. Toggle Antigravity's Claude & GPT-OSS group (its remaining Gemini group needs no extra title) and Claude Code's per-model weekly limits (Fable). Author, version, and GitHub are also listed here.
 - **Drag cards** to reorder and save immediately. Grips support touch and arrow keys.
 - **Automatic saving** keeps Menu changes in the active `config.toml`, shared across browsers and restarts. Changes save as you make them; closing the Menu finishes pending saves. If saving fails, the Menu shows an error and a Retry button.
 

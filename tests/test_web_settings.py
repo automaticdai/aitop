@@ -14,6 +14,7 @@ from aitop.web import SnapshotStore, build_app, mask_api_key
 
 PREFERENCES = {
     "layout": {"mode": "custom", "rows": 2, "columns": 2}, "show_claude_gpt": False,
+    "show_claude_model_limits": False,
     "provider_order": ["deepseek", "claude", "codex", "gemini"],
     "enabled_providers": ["claude", "codex", "gemini", "deepseek"],
 }
@@ -56,6 +57,7 @@ still a string"""
     document = tomllib.loads(path.read_text())
     assert document["web"]["layout"] == PREFERENCES["layout"]
     assert document["show_claude_gpt"] is False
+    assert document["show_claude_model_limits"] is False
     assert document["provider_order"] == PREFERENCES["provider_order"]
     assert document["web"]["port"] == 9999
     assert document["providers"]["codex"]["timeout_s"] == 9
@@ -391,6 +393,7 @@ def test_saving_writes_shared_prefs_at_the_top_level(tmp_path):
     assert client.put("/api/settings", json=PREFERENCES, headers=headers).status_code == 200
     document = tomllib.loads(path.read_text())
     assert document["show_claude_gpt"] is False
+    assert document["show_claude_model_limits"] is False
     assert document["provider_order"] == PREFERENCES["provider_order"]
     assert "show_claude_gpt" not in document["web"]
     assert "provider_order" not in document["web"]
@@ -439,3 +442,16 @@ def test_saving_an_unchanged_order_does_not_notify(tmp_path):
                "provider_order": prefs["provider_order"]}
     assert client.put("/api/settings", json=payload, headers={"X-Aitop-Token": token}).status_code == 200
     assert notified == []
+
+
+def test_show_claude_model_limits_is_optional_and_must_be_a_bool(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("")
+    client, headers = _client(path)
+    without = {k: v for k, v in PREFERENCES.items() if k != "show_claude_model_limits"}
+    assert client.put("/api/settings", json=without, headers=headers).status_code == 200
+    assert load_config(path).show_claude_model_limits is True
+    bad = {**PREFERENCES, "show_claude_model_limits": "false"}
+    assert client.put("/api/settings", json=bad, headers=headers).status_code == 400
+    assert client.put("/api/settings", json=PREFERENCES, headers=headers).status_code == 200
+    assert load_config(path).show_claude_model_limits is False
